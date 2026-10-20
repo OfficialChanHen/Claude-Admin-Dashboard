@@ -1,8 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { DATA_DIR } from './config.js'
+import { randomUUID } from 'node:crypto'
+import { DATA_DIR, PORT } from './config.js'
 import { get } from './db.js'
+import { notePid } from './stop.js'
+import { promptToolArgs } from './mcp.js'
 
 // Sends a prompt to a project by starting the claude CLI there, headless.
 // It runs on your Pro plan like any other Claude Code session, and its
@@ -31,9 +34,15 @@ export function parsePrompt(body: PromptBody): PromptRequest | { error: string }
  * The CLI flags. The prompt itself goes in on stdin, never as an argument,
  * so a prompt that looks like a flag can never be read as one.
  */
-export function claudeArgs(req: PromptRequest, resumeId: string | null) {
+export function claudeArgs(req: PromptRequest, resumeId: string | null, newId?: string) {
   const args = ['-p', '--permission-mode', req.permissionMode]
-  if (req.mode === 'continue' && resumeId) args.push('--resume', resumeId)
+  const resuming = req.mode === 'continue' ? resumeId : null
+  if (resuming) args.push('--resume', resuming)
+  // A new session gets an id up front, so HQ knows which process to stop for it.
+  else if (newId) args.push('--session-id', newId)
+  // There is no terminal to ask in, so steps that need your OK are asked in HQ.
+  const sid = resuming || newId
+  if (sid) args.push(...promptToolArgs(sid, PORT))
   return args
 }
 
@@ -52,19 +61,37 @@ export function runningPrompts() {
   return [...running.values()]
 }
 
-export function startPrompt(req: PromptRequest, cwd: string) {
-  const resumeId = req.mode === 'continue' ? resumableSession(req.projectId) : null
+// Sessions HQ is running headless right now, and the project each belongs to.
+const headless = new Map<string, { projectId: string; cwd: string }>()
+
+/** A session HQ started that is still running: its permission requests come through HQ's prompt tool. */
+export function headlessSession(sessionId: string) {
+  return headless.get(sessionId) ?? null
+}
+
+/** `resume` picks the session to carry on, instead of the project's latest. */
+export function startPrompt(req: PromptRequest, cwd: string, resume?: string) {
+  const resumeId = req.mode === 'continue' ? resume ?? resumableSession(req.projectId) : null
   const bin = process.env.HQ_CLAUDE_BIN ?? 'claude'
   // Errors go to a log file; the answer itself lands in the session log.
   const log = fs.openSync(path.join(DATA_DIR, 'prompts.log'), 'a')
   fs.writeSync(log, `\n[${new Date().toISOString()}] ${req.projectId} ${req.mode}${resumeId ? ` ${resumeId}` : ''}\n`)
-  const child = spawn(bin, claudeArgs(req, resumeId), { cwd, detached: true, stdio: ['pipe', 'ignore', log] })
+  const sessionId = resumeId ?? randomUUID()
+  const child = spawn(bin, claudeArgs(req, resumeId, sessionId), { cwd, detached: true, stdio: ['pipe', 'ignore', log] })
   fs.closeSync(log)
   child.stdin?.on('error', () => {})
   child.stdin?.end(req.text)
-  if (child.pid) running.set(child.pid, { projectId: req.projectId, startedAt: Date.now() })
-  child.on('exit', () => child.pid && running.delete(child.pid))
-  child.on('error', () => child.pid && running.delete(child.pid))
+  if (child.pid) {
+    running.set(child.pid, { projectId: req.projectId, startedAt: Date.now() })
+    notePid(sessionId, child.pid, true)
+  }
+  headless.set(sessionId, { projectId: req.projectId, cwd })
+  const done = () => {
+    if (child.pid) running.delete(child.pid)
+    headless.delete(sessionId)
+  }
+  child.on('exit', done)
+  child.on('error', done)
   child.unref()
-  return { resumed: resumeId }
+  return { resumed: resumeId, sessionId }
 }

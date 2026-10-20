@@ -115,3 +115,72 @@ describe('Camera', () => {
     expect(c.flying).toBe(false)
   })
 })
+
+describe('Camera in a room', () => {
+  const room = { x: 600, y: 400, w: 176, h: 160 }
+  const shows = (c: Camera, r: typeof room) => {
+    const a = c.toScreen(r.x, r.y)
+    const b = c.toScreen(r.x + r.w, r.y + r.h)
+    return a.x >= -1 && a.y >= -1 && b.x <= c.vw + 1 && b.y <= c.vh + 1
+  }
+
+  it('keeps the whole room in view however far you drag', () => {
+    const c = cam()
+    c.P = 3
+    c.setBounds(room)
+    c.x = room.x + room.w / 2
+    c.y = room.y + room.h / 2
+    c.panBy(5000, -5000)
+    expect(shows(c, room)).toBe(true)
+    c.panBy(-9000, 9000)
+    expect(shows(c, room)).toBe(true)
+  })
+
+  it('stays inside a room bigger than the screen', () => {
+    const c = cam()
+    c.P = 8
+    c.setBounds(room)
+    c.panBy(-100_000, -100_000)
+    expect(c.toWorld(c.vw, c.vh).x).toBeLessThanOrEqual(room.x + room.w + 0.01)
+    expect(c.toWorld(c.vw, c.vh).y).toBeLessThanOrEqual(room.y + room.h + 0.01)
+    c.panBy(100_000, 100_000)
+    expect(c.toWorld(0, 0).x).toBeGreaterThanOrEqual(room.x - 0.01)
+    expect(c.toWorld(0, 0).y).toBeGreaterThanOrEqual(room.y - 0.01)
+  })
+
+  it('flies there smoothly from far away, then holds', () => {
+    const c = cam()
+    c.P = 2
+    c.x = 100
+    c.y = 100
+    c.setBounds(room)
+    c.x = 100 // setBounds clamps at once; start the flight from far away again
+    c.y = 100
+    c.flyTo(room.x + room.w / 2, room.y + room.h / 2, c.fitP(room.w, room.h))
+    c.step(1 / 30)
+    // One frame in, it has moved toward the room but not jumped into it.
+    expect(c.x).toBeGreaterThan(100)
+    expect(c.x).toBeLessThan(room.x)
+    let steps = 0
+    while (c.step(1 / 30) && steps < 300) steps++
+    expect(c.flying).toBe(false)
+    expect(shows(c, room)).toBe(true)
+  })
+
+  it('zooms to fit the room, leaving space for the HUD', () => {
+    const c = cam()
+    expect(c.fitP(176, 160)).toBe(3) // 600 / 160
+    expect(c.fitP(176, 160, 200)).toBe(2) // 400 / 160
+    expect(c.fitP(10, 10)).toBe(c.pMax)
+  })
+
+  it('lets go of the room when you step out', () => {
+    const c = cam()
+    c.P = 3
+    c.setBounds(room)
+    c.setBounds(null)
+    c.panBy(100_000, 0)
+    expect(c.toScreen(0, 0).x).toBeLessThanOrEqual(0)
+    expect(c.x).toBeLessThan(room.x)
+  })
+})

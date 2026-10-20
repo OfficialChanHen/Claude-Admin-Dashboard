@@ -128,6 +128,45 @@ CREATE TABLE IF NOT EXISTS limits (
   seven_day_reset TEXT,
   raw             TEXT
 );
+
+-- Sessions the 5 hour budget paused, so spare usage can finish them later.
+CREATE TABLE IF NOT EXISTS paused (
+  session_id  TEXT PRIMARY KEY,
+  project_id  TEXT,
+  paused_at   INTEGER NOT NULL,
+  resumed_at  INTEGER
+);
+
+-- Each to-do list a session or helper wrote (TodoWrite), for the clipboards.
+CREATE TABLE IF NOT EXISTS todos (
+  id          TEXT PRIMARY KEY,
+  session_id  TEXT NOT NULL,
+  agent_id    TEXT,
+  ts          INTEGER NOT NULL,
+  items       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS todos_session ON todos(session_id, ts);
+
+-- Your own items on a project's clipboard.
+CREATE TABLE IF NOT EXISTS notes (
+  id          TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL,
+  text        TEXT NOT NULL,
+  done        INTEGER NOT NULL DEFAULT 0,
+  added_at    INTEGER NOT NULL,
+  done_at     INTEGER
+);
+CREATE INDEX IF NOT EXISTS notes_project ON notes(project_id, added_at);
+
+-- Prompts waiting for spare usage before a reset.
+CREATE TABLE IF NOT EXISTS queue (
+  id              TEXT PRIMARY KEY,
+  project_id      TEXT NOT NULL,
+  text            TEXT NOT NULL,
+  permission_mode TEXT NOT NULL,
+  added_at        INTEGER NOT NULL,
+  started_at      INTEGER
+);
 `)
 
 export type Row = Record<string, unknown>

@@ -5,6 +5,7 @@ import { TRANSCRIPTS_DIR } from './config.js'
 import { get, run, tx } from './db.js'
 import { bus, type LiveEvent, type SessionState } from './bus.js'
 import { projectForCwd } from './projects.js'
+import { saveTodos } from './clipboard.js'
 
 // Reads Claude Code's own session logs in ~/.claude/projects. Nothing here calls
 // the API, so the visual layer costs no tokens.
@@ -125,7 +126,7 @@ function resultChars(content: unknown): number {
   return n
 }
 
-function isRealPrompt(text: string) {
+export function isRealPrompt(text: string) {
   const t = text.trimStart()
   return !!t && !t.startsWith('<command-') && !t.startsWith('<local-command') && !t.startsWith('[Request interrupted') && !t.startsWith('<system-reminder>')
 }
@@ -249,6 +250,7 @@ function handle(ctx: Ctx, e: Entry) {
         b.id, sid, ctx.agentId, reqId ?? null, s.project_id, b.name, summary, ts,
       )
       if (res.changes && reqId) run('UPDATE requests SET tool_calls = tool_calls + 1 WHERE id = ?', reqId)
+      if (b.name === 'TodoWrite') saveTodos(b.id, sid, ctx.agentId, ts, b.input)
       if (res.changes) emit(ctx, { kind: 'action', ...base, id: b.id, requestId: reqId ?? null, tool: b.name, summary, ts })
     } else if (b.type === 'text' && b.text?.trim()) {
       emit(ctx, { kind: 'say', ...base, text: b.text.trim(), ts })
@@ -387,8 +389,45 @@ export function isReady() {
   return ready
 }
 
+/**
+ * To-do lists in logs that were read before HQ kept them. Runs once, while the
+ * table is empty, over the last week's logs, and only parses lines that have one.
+ */
+async function backfillTodos(files: string[]) {
+  if (get('SELECT 1 FROM todos LIMIT 1')) return
+  const since = Date.now() - 7 * 86400_000
+  for (const file of files) {
+    const ids = parseFile(file)
+    let text: string
+    try {
+      if (!ids || fs.statSync(file).mtimeMs < since) continue
+      text = fs.readFileSync(file, 'utf8')
+    } catch {
+      continue
+    }
+    if (!text.includes('"TodoWrite"')) continue
+    tx(() => {
+      for (const line of text.split('\n')) {
+        if (!line.includes('"TodoWrite"')) continue
+        let e: Entry
+        try {
+          e = JSON.parse(line)
+        } catch {
+          continue
+        }
+        const content = e.message?.content
+        if (e.type !== 'assistant' || !Array.isArray(content)) continue
+        const ts = Date.parse(e.timestamp ?? '') || 0
+        for (const b of content) if (b.type === 'tool_use' && b.name === 'TodoWrite' && b.id) saveTodos(b.id, e.sessionId ?? ids.sessionId, ids.agentId, ts, b.input)
+      }
+    })
+    await new Promise((r) => setImmediate(r))
+  }
+}
+
 export async function startTranscripts(onProgress?: (done: number, total: number) => void) {
   const files = listTranscripts()
+  await backfillTodos(files)
   let done = 0
   for (const f of files) {
     await ingest(f, false)

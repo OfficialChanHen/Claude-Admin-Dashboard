@@ -17,7 +17,7 @@ export type Tokens = { input: number; output: number; cacheRead: number; cacheWr
 export type Window = { pct: number; resetsAt: string | null } | null
 export type Limits = {
   fetchedAt: number
-  source: 'cache' | 'statusline'
+  source: 'api' | 'cache' | 'statusline'
   fiveHour: Window
   sevenDay: Window
   sevenDayOpus: Window
@@ -39,7 +39,43 @@ export type LiveEvent =
   | { kind: 'session'; sessionId: string; projectId: string | null; state: SessionState; title?: string | null; ts: number }
   | { kind: 'limits'; limits: Limits }
   | { kind: 'projects' }
-  | { kind: 'hello'; recent: LiveEvent[]; limits: Limits | null }
+  | { kind: 'budget' }
+  | { kind: 'clipboard'; projectId: string }
+  | { kind: 'approval'; approval: Approval }
+  | { kind: 'approval_done'; id: string; decision: 'allow' | 'deny' | null }
+  | { kind: 'hello'; recent: LiveEvent[]; limits: Limits | null; approvals?: Approval[] }
+
+/** A session asking to use a tool, held until you answer here or it goes back to the terminal. */
+export type Approval = {
+  id: string; sessionId: string; projectId: string | null; tool: string; summary: string; detail: string; ts: number; expiresAt: number
+  /** Started from HQ: there is no terminal, so without a yes the step is refused. */
+  headless?: boolean
+}
+
+/** A project's clipboard: your own items, and the plans its sessions are working through. */
+export type Note = { id: string; projectId: string; text: string; done: boolean; addedAt: number; doneAt: number | null }
+export type StepStatus = 'pending' | 'in_progress' | 'completed'
+export type Step = { text: string; status: StepStatus; active: string | null }
+export type Helper = { id: string; description: string; agentType: string | null; status: 'working' | 'done' | 'failed' | 'stopped'; steps: Step[] }
+export type Plan = {
+  sessionId: string; title: string | null; state: string; startedAt: number; updatedAt: number
+  tasks: (Step & { helpers: Helper[] })[]
+  /** Helpers sent while no task was in progress. */
+  helpers: Helper[]
+}
+export type Clipboard = { notes: Note[]; plans: Plan[] }
+
+/** The 5 hour budget: when sessions wrap up and stop, and what waits for spare usage. */
+export type Budget = {
+  on: boolean
+  wrapAt: number
+  stopAt: number
+  spareMin: number
+  phase: 'ok' | 'wrap' | 'stop'
+  spare: boolean
+  paused: { sessionId: string; projectId: string | null; title: string | null; pausedAt: number }[]
+  queue: { id: string; projectId: string; text: string; permissionMode: string; addedAt: number }[]
+}
 
 export type ActiveSession = { id: string; projectId: string | null; title: string | null; state: SessionState; lastAt: number; entrypoint: string | null; cwd: string | null }
 
@@ -75,7 +111,9 @@ export type SessionDetail = {
 export type Range = 'today' | '7d' | '30d'
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { ...init, headers: { 'content-type': 'application/json', ...init?.headers } })
+  // Fastify rejects a JSON content-type with no body, so only send it when there is one.
+  const headers = init?.body != null ? { 'content-type': 'application/json', ...init.headers } : init?.headers
+  const res = await fetch(url, { ...init, headers })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error((body as { error?: string }).error ?? 'Something went wrong.')
   return body as T
@@ -91,7 +129,26 @@ export const api = {
   session: (id: string) => req<SessionDetail>(`/api/sessions/${id}`),
   active: () => req<ActiveSession[]>('/api/active'),
   limits: () => req<Limits | null>('/api/limits'),
-  prompt: (body: { projectId: string; text: string; mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan' }) =>
-    req<{ ok: true; resumed: string | null }>('/api/prompt', { method: 'POST', body: JSON.stringify(body) }),
+  prompt: (body: { projectId: string; text: string; mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan'; when?: 'now' | 'spare' }) =>
+    req<{ ok: true; resumed?: string | null; queued?: string }>('/api/prompt', { method: 'POST', body: JSON.stringify(body) }),
+  budget: () => req<Budget>('/api/budget'),
+  unqueue: (id: string) => req<{ ok: true }>(`/api/budget/queue/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  dropPaused: (id: string) => req<{ ok: true }>(`/api/budget/paused/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  answer: (id: string, decision: 'allow' | 'deny' | 'terminal') =>
+    req<{ ok: true }>(`/api/approvals/${id}`, { method: 'POST', body: JSON.stringify({ decision }) }),
   status: () => req<{ ready: boolean; progress: { done: number; total: number } }>('/api/status'),
+  chat: (id: string) => req<ChatLine[]>(`/api/sessions/${encodeURIComponent(id)}/chat`),
+  stopSession: (id: string) => req<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}/stop`, { method: 'POST', body: '{}' }),
+  clipboard: (projectId: string) => req<Clipboard>(`/api/projects/${encodeURIComponent(projectId)}/clipboard`),
+  addNote: (projectId: string, text: string) =>
+    req<Note>(`/api/projects/${encodeURIComponent(projectId)}/notes`, { method: 'POST', body: JSON.stringify({ text }) }),
+  updateNote: (id: string, patch: { done?: boolean; text?: string }) =>
+    req<Note>(`/api/notes/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  removeNote: (id: string) => req<{ ok: true }>(`/api/notes/${encodeURIComponent(id)}`, { method: 'DELETE', body: '{}' }),
 }
+
+/** One line of a session's conversation. Keys match the live feed's keys. */
+export type ChatLine =
+  | { kind: 'you'; key: string; ts: number; text: string }
+  | { kind: 'claude'; key: string; ts: number; text: string }
+  | { kind: 'step'; key: string; ts: number; tool: string; summary: string; isError: boolean }

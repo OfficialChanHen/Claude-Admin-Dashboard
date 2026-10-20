@@ -5,9 +5,9 @@ import { MAX_JUNIORS_PER_SESSION, OTHER, WorldModel, clip, promptText, stationFo
 
 const NOW = 1_800_000_000_000
 const office = buildOffice([
-  { id: 'p1', name: 'Alpha', color: 'sage' },
-  { id: 'p2', name: 'Beta', color: 'sky' },
-  { id: OTHER, name: 'Other folders', color: 'stone' },
+  { id: 'p1', name: 'Alpha' },
+  { id: 'p2', name: 'Beta' },
+  { id: OTHER, name: 'Other folders' },
 ])
 const pod = office.pods[0]
 
@@ -82,6 +82,17 @@ describe('seniors', () => {
     expect(at(s, office.door)).toBe(true)
     run(m, 30)
     expect(at(s, pod.seniorSeats[0])).toBe(true)
+  })
+
+  it('come back at their desks after a reload instead of walking in again', () => {
+    const m = world()
+    m.seated = new Set(['s1', 'j1'])
+    m.sync([session('s1', { lastAt: NOW - 1000 })], NOW)
+    m.ingest(agentStart('j1'), NOW)
+    expect(at(m.sprites.get('s1')!, pod.seniorSeats[0])).toBe(true)
+    expect(at(m.sprites.get('j1')!, office.door)).toBe(false)
+    expect(m.sprites.get('j1')!.activity).toBe('work')
+    expect(m.seated.size).toBe(0)
   })
 
   it('use the hub table when every senior desk is taken', () => {
@@ -306,14 +317,86 @@ describe('reactions', () => {
   })
 })
 
+describe('using', () => {
+  it('says which furniture someone is at, and what for, once they get there', () => {
+    const m = world()
+    m.sync([session('s1', { lastAt: NOW - 5 * 60_000 })], NOW)
+    const s = m.sprites.get('s1')!
+    expect(m.using(s)).toEqual({ at: 'desk', active: false, task: null })
+    m.ingest(action({ tool: 'Grep', summary: 'TODO' }), NOW)
+    expect(s.summary).toBe('TODO')
+    expect(s.actAt).toBe(NOW)
+    expect(m.using(s)).toBeNull() // still walking over
+    run(m, 20)
+    expect(m.using(s)).toEqual({ at: 'cabinet', active: true, task: 'search' })
+    m.ingest({ kind: 'action_done', sessionId: 's1', projectId: 'p1', agentId: null, id: 'a1', isError: false, resultTokens: 1, ts: NOW }, NOW)
+    expect(m.using(s)).toEqual({ at: 'cabinet', active: false, task: null })
+    m.ingest(action({ id: 'a2', tool: 'Bash' }), NOW)
+    run(m, 20)
+    expect(m.using(s)).toEqual({ at: 'desk', active: true, task: 'run' })
+  })
+
+  it('is the whiteboard while planning or asking you', () => {
+    const m = world()
+    m.sync([session('s1', { lastAt: NOW - 5 * 60_000 })], NOW)
+    const s = m.sprites.get('s1')!
+    m.ingest(action({ tool: 'TodoWrite' }), NOW)
+    run(m, 20)
+    expect(m.using(s)).toMatchObject({ at: 'board', task: 'plan' })
+  })
+
+  it('is the break spot on a break, and nothing for a senior working from the hub table', () => {
+    const m = world(0.1)
+    m.sync([session('s1', { state: 'idle', lastAt: NOW - 30_000 })], NOW)
+    const s = m.sprites.get('s1')!
+    let t = NOW
+    for (let i = 0; i < 1200 && !(s.activity === 'break' && !s.path.length); i++) {
+      t += 50
+      m.tick(0.05, t)
+    }
+    expect(s.activity).toBe('break')
+    expect(['coffee', 'vending', 'table', 'sofa', 'plant']).toContain(m.using(s)?.at)
+    const m2 = world()
+    m2.sync(['s1', 's2', 's3', 's4'].map((id) => session(id, { lastAt: NOW - 5 * 60_000 })), NOW)
+    expect(m2.using(m2.sprites.get('s4')!)).toBeNull()
+  })
+
+  it('is a hand-off while a junior is briefed', () => {
+    const m = world()
+    m.sync([session('s1', { lastAt: NOW - 5 * 60_000 })], NOW)
+    m.ingest(agentStart('j1'), NOW)
+    const j = m.sprites.get('j1')!
+    let t = NOW
+    for (let i = 0; i < 600 && j.activity !== 'brief'; i++) {
+      t += 50
+      m.tick(0.05, t)
+    }
+    expect(m.using(j)).toEqual({ at: 'handoff', active: true, task: null })
+  })
+})
+
+describe('finishing a turn', () => {
+  it('cheers when a working session goes idle, but not for old news', () => {
+    const m = world()
+    m.ingest(action(), NOW)
+    m.ingest({ kind: 'session', sessionId: 's1', projectId: 'p1', state: 'idle', ts: NOW }, NOW + 1000)
+    const s = m.sprites.get('s1')!
+    expect(s.emote).toMatchObject({ kind: 'done', since: NOW + 1000 })
+    const m2 = world()
+    m2.sync([session('s2', { lastAt: NOW - 5 * 60_000 })], NOW)
+    m2.ingest({ kind: 'session', sessionId: 's2', projectId: 'p1', state: 'idle', ts: NOW }, NOW)
+    expect(m2.sprites.get('s2')!.emote).toBeNull()
+  })
+})
+
 describe('moving offices', () => {
   it('re-seat everyone when the floor plan changes', () => {
     const m = world()
     m.sync([session('s1', { projectId: 'p2', lastAt: NOW - 5 * 60_000 })], NOW)
     const bigger = buildOffice([
-      { id: 'p0', name: 'New', color: 'rose' },
-      { id: 'p1', name: 'Alpha', color: 'sage' },
-      { id: 'p2', name: 'Beta', color: 'sky' },
+      { id: 'p0', name: 'New' },
+      { id: 'p1', name: 'Alpha' },
+      { id: 'p2', name: 'Beta' },
     ])
     m.setOffice(bigger, NOW)
     const s = m.sprites.get('s1')!
@@ -324,5 +407,63 @@ describe('moving offices', () => {
     const m = world()
     m.sync([session('s1', { projectId: 'nowhere', lastAt: NOW - 5 * 60_000 })], NOW)
     expect(m.sprites.get('s1')!.placed).toBe(false)
+  })
+})
+
+describe('picking people up', () => {
+  it('only picks up seniors', () => {
+    const m = world()
+    m.sync([session('s1', { lastAt: NOW - 5 * 60_000 })], NOW)
+    m.ingest(agentStart('h1'), NOW)
+    expect(m.grab('h1')).toBeNull()
+    expect(m.grab('s1')?.held).toBe(true)
+  })
+
+  it('holds them still while carried, then they walk back to work', () => {
+    const m = world()
+    m.sync([session('s1', { lastAt: NOW - 5 * 60_000 })], NOW)
+    const s = m.grab('s1')!
+    m.carry(s, office.door.x, office.door.y)
+    run(m, 2)
+    expect(at(s, office.door)).toBe(true)
+    expect(m.using(s)).toBeNull()
+    m.putDown(s)
+    expect(s.held).toBe(false)
+    run(m, 60, NOW + 2000)
+    expect(at(s, m.seat(s)!)).toBe(true)
+  })
+
+  it('sends a dismissed senior and their helpers out of the door', () => {
+    const m = world()
+    m.sync([session('s1', { lastAt: NOW - 5 * 60_000 })], NOW)
+    m.ingest(agentStart('h1'), NOW)
+    m.grab('s1')
+    m.dismiss('s1', NOW)
+    expect(m.sprites.get('s1')!.activity).toBe('leave')
+    expect(m.sprites.get('h1')!.activity).toBe('leave')
+    run(m, 120)
+    expect(m.sprites.size).toBe(0)
+  })
+})
+
+describe('thinking', () => {
+  it('is a working senior at the desk with no tool running and nothing to say', () => {
+    const m = world()
+    m.sync([session('s1', { lastAt: NOW - 5 * 60_000 })], NOW)
+    const s = m.sprites.get('s1')!
+    expect(m.thinking(s, NOW)).toBe(true)
+    m.ingest(action(), NOW)
+    expect(m.thinking(s, NOW)).toBe(false) // running a command
+    m.ingest({ kind: 'action_done', sessionId: 's1', projectId: 'p1', agentId: null, id: 'a1', isError: false, resultTokens: 0, ts: NOW }, NOW)
+    expect(m.thinking(s, NOW)).toBe(true)
+    m.ingest({ kind: 'session', sessionId: 's1', projectId: 'p1', state: 'idle', ts: NOW }, NOW)
+    expect(m.thinking(s, NOW)).toBe(false)
+  })
+
+  it('shows a light bulb when a thought is finished', () => {
+    const m = world()
+    m.sync([session('s1', { lastAt: NOW - 5 * 60_000 })], NOW)
+    m.ingest({ kind: 'think', sessionId: 's1', projectId: 'p1', agentId: null, ts: NOW }, NOW)
+    expect(m.sprites.get('s1')!.emote?.kind).toBe('idea')
   })
 })

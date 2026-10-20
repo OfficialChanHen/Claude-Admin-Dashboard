@@ -31,8 +31,14 @@ function Meter({ label, w, now }: { label: string; w: Window; now: number }) {
   )
 }
 
+const SOURCE: Record<Limits['source'], string> = {
+  api: 'Asked Anthropic directly, once a minute',
+  cache: 'From Claude Code’s saved copy',
+  statusline: 'From the Claude Code status line',
+}
+
 export function LimitsBar({ limits }: { limits: Limits | null }) {
-  const now = useNow(30_000)
+  const now = useNow(10_000)
   if (!limits) return <div className="meter-sub">Plan limits show up after Claude Code checks them.</div>
   return (
     <div className="limits">
@@ -40,7 +46,7 @@ export function LimitsBar({ limits }: { limits: Limits | null }) {
       <Meter label="Weekly limit" w={limits.sevenDay} now={now} />
       {limits.sevenDayOpus && <Meter label="Weekly Opus" w={limits.sevenDayOpus} now={now} />}
       {limits.sevenDaySonnet && <Meter label="Weekly Sonnet" w={limits.sevenDaySonnet} now={now} />}
-      <div className="meter-sub" title={limits.source === 'statusline' ? 'From the Claude Code status line' : 'From Claude Code’s saved copy'}>
+      <div className="meter-sub" title={SOURCE[limits.source]}>
         Checked {ago(limits.fetchedAt, now)}
       </div>
     </div>

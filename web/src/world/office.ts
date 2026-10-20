@@ -11,6 +11,10 @@ export const CELL_W = POD_W + GAP
 export const CELL_H = POD_H + GAP
 export const WALL = 2 // wall rows along the top
 export const EDGE = 2 // aisle tiles along the left
+export const ROOM_WALL = 3 // art px: how thick each room's walls are
+export const ROOM_FACE = 14 // art px: the back wall of a room, seen from the front, tall enough to hang things on
+export const FIXTURE_H = 10 // art px: name plates, clocks and boards hung on a back wall
+export const HUB = '_hub'
 
 export type Sheet = 'indoor' | 'urban'
 export type Prop = { sheet: Sheet; c: number; r: number; x: number; y: number } // sheet tile, then art px on the floor
@@ -22,13 +26,14 @@ export type Area = {
   id: string
   kind: AreaKind
   name: string
-  color: string
   rect: Rect
   cell: { c: number; r: number }
   /** Rows people walk along inside the area. */
   aisles: number[]
   /** The aisle column just right of the area, which runs the full floor. */
   exitX: number
+  /** Gaps in the right-hand wall, one at the end of each aisle. */
+  doors: Rect[]
 }
 
 export type Pod = Area & {
@@ -38,13 +43,78 @@ export type Pod = Area & {
   juniorDesks: Rect[]
   board: Point // stand here to plan
   cabinet: Point // stand here to look things up
+  boardRect: Rect
+  cabinetRect: Rect
+  /** The name plate on the back wall, with a lamp that shows how the room is doing. */
+  plate: Rect
+  /** The clipboard hung left of the name plate: your to-do items and Claude's plans. */
+  clipboard: Rect
+  look: Look
 }
 
-export type FacilityKey = 'reception' | 'accounts' | 'archive' | 'clock'
+/** What makes each area its own: the floor, which way round it is, and the odds and ends in it. */
+export type FloorKind = 'planks' | 'tiles' | 'checker' | 'carpet' | 'parquet' | 'bricks'
+export type Look = { floor: FloorKind; tone: number; mirror: boolean; decor: number }
+
+export const FLOORS: FloorKind[] = ['planks', 'tiles', 'checker', 'carpet', 'parquet', 'bricks']
+export const TONES = 3
+export const DECOR_SETS = 4
+const LOOKS = FLOORS.length * TONES * 2 * DECOR_SETS
+
+function lookOf(n: number): Look {
+  const decor = n % DECOR_SETS
+  n = Math.floor(n / DECOR_SETS)
+  const mirror = n % 2 === 1
+  n = Math.floor(n / 2)
+  return { floor: FLOORS[Math.floor(n / TONES) % FLOORS.length], tone: n % TONES, mirror, decor }
+}
+
+function hash(s: string) {
+  let h = 2166136261
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619)
+  return h >>> 0
+}
+
+/**
+ * A look for each area, picked from its id so it mostly stays put as projects
+ * come and go. No two areas share a look, and floors are shared out evenly so
+ * the first six areas all have different ones.
+ */
+export function looksFor(ids: string[]): Look[] {
+  const taken = new Set<number>()
+  const floors = new Map<FloorKind, number>()
+  return ids.map((id) => {
+    const start = hash(id) % LOOKS
+    const fewest = Math.min(...FLOORS.map((f) => floors.get(f) ?? 0))
+    let pick = -1
+    for (let i = 0; i < LOOKS; i++) {
+      const n = (start + i) % LOOKS
+      if (taken.has(n)) continue
+      if (pick < 0) pick = n
+      if ((floors.get(lookOf(n).floor) ?? 0) === fewest) {
+        pick = n
+        break
+      }
+    }
+    if (pick < 0) pick = start // more areas than looks: repeats are unavoidable
+    taken.add(pick)
+    const look = lookOf(pick)
+    floors.set(look.floor, (floors.get(look.floor) ?? 0) + 1)
+    return look
+  })
+}
+
+/**
+ * Things you click for office services. The clock, the plan meter and the
+ * notice board hang on the hub's back wall; the light switch is by the entrance.
+ */
+export type FacilityKey = 'reception' | 'accounts' | 'archive' | 'clock' | 'limits' | 'notice' | 'lights'
 export type Facility = { key: FacilityKey; label: string; rect: Rect; stand: Point }
 
 export type BreakSpot = Point & { kind: 'coffee' | 'vending' | 'table' | 'sofa' | 'window' | 'plant'; face: Facing }
 export type Facing = 'up' | 'down' | 'left' | 'right'
+/** The break furniture in the hub, for tooltips. */
+export type Lounge = { thing: 'coffee' | 'vending' | 'table' | 'sofa'; rect: Rect }
 
 export type Office = {
   w: number // art px
@@ -54,14 +124,24 @@ export type Office = {
   hub: Area
   facilities: Facility[]
   breakSpots: BreakSpot[]
+  lounge: Lounge[]
+  /** Where people come in and leave: just inside the entrance. */
   door: Point
+  /** The entrance in the back wall, with its lamp above. */
+  entrance: Rect
+  /** The office sign on the back wall. */
+  sign: Rect
+  /** Windows in the back wall; the sky in them follows the time of day. */
+  windows: Rect[]
+  /** Where the receptionist sits. */
+  receptionist: Point
   corridorYs: number[]
   corridorXs: number[]
   props: Prop[]
   monitors: Point[] // top-left of each desk monitor, drawn by hand
 }
 
-export type PodInfo = { id: string; name: string; color: string }
+export type PodInfo = { id: string; name: string }
 
 /** Cells across and down for n pods plus the hub, wider than tall like a screen. */
 export function gridFor(pods: number) {
@@ -82,6 +162,26 @@ const JUNIOR_COLS = [1, 3, 5, 7]
 export const SENIOR_SLOTS = SENIOR_COLS.length
 export const JUNIOR_SLOTS = JUNIOR_COLS.length
 
+// Odds and ends that give each area its character: sheet, tile, tiles wide.
+type DecorKind = 'plant' | 'tallPlant' | 'cabinet' | 'printer' | 'vending' | 'coffee'
+const DECOR_ART: Record<DecorKind, [Sheet, number, number, number]> = {
+  plant: ['indoor', 16, 0, 1],
+  tallPlant: ['indoor', 17, 0, 1],
+  cabinet: ['indoor', 1, 13, 1],
+  printer: ['urban', 10, 12, 1],
+  vending: ['urban', 12, 10, 1],
+  coffee: ['indoor', 5, 12, 3],
+}
+// Spots that are never walked through: row 0 between the whiteboard and the
+// cabinets, and the ends of the desk rows (columns 0 and 9, rows 2, 5 and 6).
+// Areas can be mirrored, so every spot must be free on both sides.
+const DECOR: { kind: DecorKind; c: number; r: number }[][] = [
+  [{ kind: 'plant', c: 5, r: 0 }, { kind: 'tallPlant', c: 9, r: 6 }],
+  [{ kind: 'coffee', c: 3, r: 0 }, { kind: 'plant', c: 7, r: 0 }, { kind: 'tallPlant', c: 0, r: 6 }, { kind: 'cabinet', c: 9, r: 2 }],
+  [{ kind: 'vending', c: 3, r: 0 }, { kind: 'plant', c: 5, r: 0 }, { kind: 'tallPlant', c: 7, r: 0 }, { kind: 'plant', c: 0, r: 2 }, { kind: 'plant', c: 9, r: 6 }],
+  [{ kind: 'printer', c: 3, r: 0 }, { kind: 'cabinet', c: 4, r: 0 }, { kind: 'tallPlant', c: 6, r: 0 }, { kind: 'tallPlant', c: 0, r: 5 }, { kind: 'plant', c: 9, r: 2 }, { kind: 'plant', c: 9, r: 6 }],
+]
+
 export function buildOffice(infos: PodInfo[]): Office {
   const grid = gridFor(infos.length)
   const hubCell = { c: Math.floor((grid.cols - 1) / 2), r: Math.floor((grid.rows - 1) / 2) }
@@ -97,25 +197,35 @@ export function buildOffice(infos: PodInfo[]): Office {
   const monitors: Point[] = []
   const put = (sheet: Sheet, c: number, r: number, x: number, y: number) => props.push({ sheet, c, r, x, y })
 
-  const area = (id: string, kind: AreaKind, name: string, color: string, cell: { c: number; r: number }): Area => {
+  const area = (id: string, kind: AreaKind, name: string, cell: { c: number; r: number }): Area => {
     const o = cellOrigin(cell.c, cell.r)
     return {
-      id, kind, name, color, cell,
+      id, kind, name, cell,
       rect: { x: o.x, y: o.y, w: t(POD_W), h: t(POD_H) },
       aisles: AISLE_ROWS.map((row) => o.y + t(row) + 12),
       exitX: o.x + t(POD_W) + t(GAP) / 2,
+      doors: AISLE_ROWS.map((row) => ({ x: o.x + t(POD_W), y: o.y + t(row), w: ROOM_WALL, h: TILE })),
     }
   }
 
+  const looks = looksFor(infos.map((p) => p.id))
   const pods: Pod[] = infos.map((info, i) => {
-    const a = area(info.id, 'pod', info.name, info.color, cells[i])
+    const a = area(info.id, 'pod', info.name, cells[i])
+    const look = looks[i]
     const { x, y } = a.rect
-    put('urban', 8, 13, x + t(0), y)
-    put('urban', 9, 13, x + t(1), y)
-    put('urban', 10, 13, x + t(2), y) // whiteboard
-    put('indoor', 1, 13, x + t(8), y)
-    put('indoor', 1, 13, x + t(9), y) // filing cabinets
-    put('indoor', 16, 0, x + t(5), y) // plant
+    // Mirrored areas have the whiteboard on the right and the cabinets on the left.
+    const mx = (c: number, w = 1) => (look.mirror ? POD_W - c - w : c)
+    const bc = mx(0, 3)
+    put('urban', 8, 13, x + t(bc), y)
+    put('urban', 9, 13, x + t(bc + 1), y)
+    put('urban', 10, 13, x + t(bc + 2), y) // whiteboard
+    put('indoor', 1, 13, x + t(mx(8)), y)
+    put('indoor', 1, 13, x + t(mx(9)), y) // filing cabinets
+    for (const d of DECOR[look.decor]) {
+      const [sheet, c, r, w] = DECOR_ART[d.kind]
+      const col = mx(d.c, w)
+      for (let k = 0; k < w; k++) put(sheet, c + k, r, x + t(col + k), y + t(d.r))
+    }
     const seniorDesks: Rect[] = []
     const seniorSeats: Point[] = []
     for (const c of SENIOR_COLS) {
@@ -135,17 +245,21 @@ export function buildOffice(infos: PodInfo[]): Office {
       juniorDesks.push({ x: x + t(c), y: y + t(5), w: t(1), h: t(1) })
       juniorSeats.push({ x: x + t(c) + 8, y: y + t(6) + 13 })
     }
-    put('indoor', 17, 0, x + t(9), y + t(6)) // plant by the junior desks
     return {
       ...a,
       seniorDesks, seniorSeats, juniorDesks, juniorSeats,
-      board: { x: x + t(1) + 8, y: a.aisles[0] },
-      cabinet: { x: x + t(9), y: a.aisles[0] },
+      board: { x: x + t(bc + 1) + 8, y: a.aisles[0] },
+      cabinet: { x: x + (look.mirror ? t(1) + 4 : t(9)), y: a.aisles[0] },
+      boardRect: { x: x + t(bc), y, w: t(3), h: t(1) },
+      cabinetRect: { x: x + t(mx(8, 2)), y, w: t(2), h: t(1) },
+      plate: { x: x + 32, y: wallBand(a), w: a.rect.w - 64, h: FIXTURE_H },
+      clipboard: { x: x + 14, y: wallBand(a), w: 9, h: FIXTURE_H },
+      look,
     }
   })
 
   // The hub: break area on the left, office services on the right.
-  const hub = area('_hub', 'hub', 'Hub', 'stone', hubCell)
+  const hub = area(HUB, 'hub', 'Hub', hubCell)
   const { x: hx, y: hy } = hub.rect
   put('indoor', 5, 12, hx, hy)
   put('indoor', 6, 12, hx + t(1), hy)
@@ -173,8 +287,14 @@ export function buildOffice(infos: PodInfo[]): Office {
     { key: 'reception', label: 'Reception', rect: { x: hx + t(6), y: hy + t(2), w: t(3), h: t(2) }, stand: { x: hx + t(7) + 8, y: hub.aisles[1] } },
     { key: 'accounts', label: 'Accounts', rect: { x: hx + t(7), y: hy + t(5), w: t(3), h: t(1) }, stand: { x: hx + t(8), y: hub.aisles[2] } },
     { key: 'archive', label: 'Archive', rect: { x: hx + t(6), y: hy, w: t(4), h: t(1) }, stand: { x: hx + t(8), y: hub.aisles[0] } },
-    { key: 'clock', label: 'Clock', rect: { x: hx + t(5), y: hy, w: t(1), h: t(1) }, stand: { x: hx + t(5) + 8, y: hub.aisles[0] } },
   ]
+  // On the hub's back wall: the notice board (the key), the clock and the plan meter.
+  const band = wallBand(hub)
+  facilities.push(
+    { key: 'notice', label: 'Notice board', rect: { x: hx + 6, y: band, w: 30, h: FIXTURE_H }, stand: { x: hx + t(1), y: hub.aisles[0] } },
+    { key: 'clock', label: 'Clock', rect: { x: hx + t(5) + 3, y: band, w: 10, h: FIXTURE_H }, stand: { x: hx + t(5) + 8, y: hub.aisles[0] } },
+    { key: 'limits', label: 'Plan meter', rect: { x: hx + t(6) + 6, y: band, w: 52, h: FIXTURE_H }, stand: { x: hx + t(8), y: hub.aisles[0] } },
+  )
 
   const breakSpots: BreakSpot[] = [
     { kind: 'coffee', x: hx + t(1), y: hub.aisles[0], face: 'up' },
@@ -187,12 +307,86 @@ export function buildOffice(infos: PodInfo[]): Office {
     { kind: 'plant', x: hx + t(4) + 8, y: hub.aisles[0], face: 'up' },
   ]
 
+  const lounge: Lounge[] = [
+    { thing: 'coffee', rect: { x: hx, y: hy, w: t(3), h: t(1) } },
+    { thing: 'vending', rect: { x: hx + t(3), y: hy, w: t(1), h: t(1) } },
+    { thing: 'table', rect: { x: hx + t(1), y: hy + t(2), w: t(2), h: t(2) } },
+    { thing: 'sofa', rect: { x: hx, y: hy + t(6), w: t(4), h: t(1) } },
+  ]
+
   const w = t(EDGE + grid.cols * CELL_W)
   const h = t(WALL + grid.rows * CELL_H + 1)
   const corridorXs = [t(EDGE) / 2, ...Array.from({ length: grid.cols }, (_, c) => t(EDGE + c * CELL_W + POD_W) + t(GAP) / 2)]
   const corridorYs = Array.from({ length: grid.rows }, (_, r) => t(WALL + r * CELL_H + POD_H) + t(GAP) / 2)
-  const door = { x: hub.exitX, y: h - 4 }
-  return { w, h, grid, pods, hub, facilities, breakSpots, door, corridorXs, corridorYs, props, monitors }
+
+  // The entrance is in the back wall at the top of the hub's corridor, with the
+  // light switch beside it and the office sign over the hub's column.
+  const entrance = { x: hub.exitX - 9, y: t(WALL) - 26, w: 18, h: 26 }
+  const door = { x: hub.exitX, y: t(WALL) + 6 }
+  facilities.push({ key: 'lights', label: 'Light switch', rect: { x: entrance.x + entrance.w + 4, y: 14, w: 6, h: 9 }, stand: door })
+  const sign = { x: hx + 16, y: 3, w: t(POD_W) - 32, h: 13 }
+  const clear = (r: Rect) => [sign, { ...entrance, x: entrance.x - 4, w: entrance.w + 18 }].every((o) => !(r.x < o.x + o.w && o.x < r.x + r.w))
+  const windows: Rect[] = []
+  for (let x = t(2); x + t(2) <= w - t(1); x += t(6)) {
+    const r = { x, y: 3, w: t(2), h: 14 }
+    if (clear(r)) windows.push(r)
+  }
+  const receptionist = { x: hx + t(7) + 8, y: hy + t(2) + 13 }
+  return { w, h, grid, pods, hub, facilities, breakSpots, lounge, door, entrance, sign, windows, receptionist, corridorXs, corridorYs, props, monitors }
+}
+
+/** The top of the strip of back wall where a room's plates and clocks hang. Top-row rooms use the office wall. */
+export function wallBand(a: Pick<Area, 'rect' | 'cell'>) {
+  return a.cell.r > 0 ? a.rect.y - ROOM_FACE + 2 : a.rect.y - ROOM_WALL - FIXTURE_H - 1
+}
+
+/** Every room on the floor: the hub, then the project areas. */
+export function rooms(office: Office): Area[] {
+  return [office.hub, ...office.pods]
+}
+
+export function roomById(office: Office, id: string): Area | null {
+  return rooms(office).find((a) => a.id === id) ?? null
+}
+
+/** A room with its walls. Rooms on the top row back onto the office wall, so their top wall is thin. */
+export function outerRect(a: Area): Rect {
+  const top = a.cell.r > 0 ? ROOM_FACE : ROOM_WALL
+  return { x: a.rect.x - ROOM_WALL, y: a.rect.y - top, w: a.rect.w + ROOM_WALL * 2, h: a.rect.h + ROOM_WALL + top }
+}
+
+/** A room with its walls and whatever hangs on its back wall: what belongs to the room when you click. */
+export function roomShell(a: Area): Rect {
+  const o = outerRect(a)
+  const top = Math.min(o.y, wallBand(a))
+  return { x: o.x, y: top, w: o.w, h: o.y + o.h - top }
+}
+
+/** What the camera keeps in view inside a room: its walls and the name plaque above it. */
+export function roomBounds(a: Area): Rect {
+  return { x: a.rect.x - 8, y: a.rect.y - 24, w: a.rect.w + 16, h: a.rect.h + 32 }
+}
+
+/** The room next door in a direction, or the nearest one that way when that cell is empty. */
+export function neighbor(office: Office, id: string, dir: Facing): Area | null {
+  const from = roomById(office, id)
+  if (!from) return null
+  const [dc, dr] = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[dir]
+  let best: Area | null = null
+  let bestScore = Infinity
+  for (const a of rooms(office)) {
+    const c = a.cell.c - from.cell.c
+    const r = a.cell.r - from.cell.r
+    const ahead = c * dc + r * dr
+    if (ahead <= 0) continue
+    // Straight ahead first; a step to the side costs more than a step forward.
+    const score = ahead + 2 * Math.abs(dc ? r : c)
+    if (score < bestScore) {
+      best = a
+      bestScore = score
+    }
+  }
+  return best
 }
 
 /** The area a point is in, if any. */

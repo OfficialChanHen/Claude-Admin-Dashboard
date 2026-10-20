@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import type { ApprovalEvent } from './approvals.js'
 
 // Everything the UI animates goes through here and out over the websocket.
 export type LiveEvent =
@@ -12,6 +13,9 @@ export type LiveEvent =
   | { kind: 'session'; sessionId: string; projectId: string | null; state: SessionState; title?: string | null; ts: number }
   | { kind: 'limits'; limits: unknown }
   | { kind: 'projects' }
+  | { kind: 'budget' }
+  | { kind: 'clipboard'; projectId: string }
+  | ApprovalEvent
 
 export type SessionState = 'working' | 'waiting' | 'idle' | 'ended'
 

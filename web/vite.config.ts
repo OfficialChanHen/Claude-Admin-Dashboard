@@ -9,6 +9,10 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 4318,
     strictPort: true,
+    // A half-saved file should not cover the office with an error page. Errors
+    // still show in this terminal and the browser console, and the last working
+    // code keeps running until the file is fixed.
+    hmr: { overlay: false },
     proxy: {
       '/api': server,
       '/ws': { target: server, ws: true },

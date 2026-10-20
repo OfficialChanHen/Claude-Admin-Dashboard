@@ -3,7 +3,7 @@ import type { Project } from '../lib/api'
 import { PixelIcon } from './PixelIcon'
 import { zoneColor } from './ProjectsPanel'
 
-export type SendOptions = { mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan' }
+export type SendOptions = { mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan'; when: 'now' | 'spare' }
 
 function stored<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   try {
@@ -37,6 +37,8 @@ export function PromptBar({
   const [text, setText] = useState('')
   const [mode, setMode] = useState<SendOptions['mode']>(() => stored('hq.prompt.mode', ['new', 'continue'] as const, 'new'))
   const [perm, setPerm] = useState<SendOptions['permissionMode']>(() => stored('hq.prompt.perm', ['acceptEdits', 'plan'] as const, 'acceptEdits'))
+  // Spare usage waits for the last half hour before a reset, as a new task.
+  const [when, setWhen] = useState<SendOptions['when']>('now')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ text: string; bad: boolean } | null>(null)
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -61,9 +63,14 @@ export function PromptBar({
     setBusy(true)
     setNote(null)
     try {
-      await onSend(t, { mode, permissionMode: perm })
+      await onSend(t, { mode: when === 'spare' ? 'new' : mode, permissionMode: perm, when })
       setText('')
-      setNote({ text: `Sent to ${project.name}. Someone will sit down at a desk there shortly.`, bad: false })
+      setNote({
+        text: when === 'spare'
+          ? `Queued for ${project.name}. It starts near the next reset if usage is left and nothing else is running.`
+          : `Sent to ${project.name}. Someone will sit down at a desk there shortly.`,
+        bad: false,
+      })
     } catch (e) {
       setNote({ text: (e as Error).message, bad: true })
     } finally {
@@ -82,21 +89,30 @@ export function PromptBar({
       <div className="prompt-to">
         <span className="zone" style={{ background: zoneColor(project.color) }} />
         <span className="prompt-name">{project.name}</span>
-        <div className="seg" role="group" aria-label="Session">
-          {([['new', 'New task'], ['continue', 'Continue last']] as const).map(([k, l]) => (
-            <button
-              type="button"
-              key={k}
-              aria-pressed={mode === k}
-              onClick={() => {
-                setMode(k)
-                store('hq.prompt.mode', k)
-              }}
-            >
+        <div className="seg" role="group" aria-label="When">
+          {([['now', 'Now'], ['spare', 'Spare usage']] as const).map(([k, l]) => (
+            <button type="button" key={k} aria-pressed={when === k} onClick={() => setWhen(k)}>
               {l}
             </button>
           ))}
         </div>
+        {when === 'now' && (
+          <div className="seg" role="group" aria-label="Session">
+            {([['new', 'New task'], ['continue', 'Continue last']] as const).map(([k, l]) => (
+              <button
+                type="button"
+                key={k}
+                aria-pressed={mode === k}
+                onClick={() => {
+                  setMode(k)
+                  store('hq.prompt.mode', k)
+                }}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="seg" role="group" aria-label="What it may do">
           {([['acceptEdits', 'Can edit'], ['plan', 'Plan only']] as const).map(([k, l]) => (
             <button
@@ -130,7 +146,7 @@ export function PromptBar({
             }
           }}
         />
-        <button className="btn primary" type="submit" disabled={busy || !text.trim()}>{busy ? 'Sending...' : 'Send'}</button>
+        <button className="btn primary" type="submit" disabled={busy || !text.trim()}>{busy ? 'Sending...' : when === 'spare' ? 'Queue' : 'Send'}</button>
       </div>
       {note && <div className={`prompt-note ${note.bad ? 'bad' : ''}`} role={note.bad ? 'alert' : 'status'}>{note.text}</div>}
     </form>

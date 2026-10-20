@@ -17,6 +17,7 @@ export const WEB_DIST = path.join(ROOT, 'web', 'dist')
 export const CLAUDE_DIR = path.join(HOME, '.claude')
 export const TRANSCRIPTS_DIR = path.join(CLAUDE_DIR, 'projects')
 export const CLAUDE_STATE = path.join(HOME, '.claude.json')
+export const CLAUDE_CREDENTIALS = path.join(CLAUDE_DIR, '.credentials.json')
 
 // Where to look for git repos on first run. More can be added from the app.
 export const SCAN_ROOTS = (process.env.HQ_SCAN_ROOTS ?? path.join(HOME, 'Programming'))
@@ -25,3 +26,20 @@ export const SCAN_ROOTS = (process.env.HQ_SCAN_ROOTS ?? path.join(HOME, 'Program
 
 // A session with no activity for this long is shown as asleep.
 export const ACTIVE_WINDOW_MS = 10 * 60 * 1000
+
+// How long a permission request waits for an answer in HQ before Claude Code
+// asks in the terminal instead. scripts/install-hooks.mjs reads the same variable.
+export const APPROVAL_WAIT_MS = Number(process.env.HQ_APPROVAL_WAIT ?? 120) * 1000
+
+// The 5 hour budget (see budget.ts). Sessions are asked to wrap up at
+// HQ_WRAP_AT percent and kept from starting new steps at HQ_STOP_AT. In the
+// last HQ_SPARE_MIN minutes before the window resets, whatever is left goes to
+// paused and queued work. HQ_BUDGET=off turns all of it off.
+export const BUDGET = {
+  on: process.env.HQ_BUDGET !== 'off',
+  wrapAt: Number(process.env.HQ_WRAP_AT ?? 80),
+  stopAt: Number(process.env.HQ_STOP_AT ?? 85),
+  spareMs: Number(process.env.HQ_SPARE_MIN ?? 30) * 60_000,
+  spareWrapAt: 95,
+  spareStopAt: 99,
+}

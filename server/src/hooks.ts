@@ -1,6 +1,7 @@
 import { get, run } from './db.js'
 import { projectForCwd } from './projects.js'
 import { setSessionState } from './transcripts.js'
+import { notePid } from './stop.js'
 import type { SessionState } from './bus.js'
 
 // Claude Code hooks post their stdin JSON here (see scripts/install-hooks.mjs).
@@ -25,10 +26,12 @@ const STATE: Record<string, SessionState> = {
   SessionEnd: 'ended',
 }
 
-export function handleHook(p: HookPayload) {
+/** `pid` is the claude process that ran the hook, so HQ can stop that session later. */
+export function handleHook(p: HookPayload, pid?: number) {
   const sid = p.session_id
   const name = p.hook_event_name
   if (!sid || !name) return
+  if (pid && name !== 'SessionEnd') notePid(sid, pid)
   if (!get('SELECT 1 FROM sessions WHERE id = ?', sid)) {
     const now = Date.now()
     run(

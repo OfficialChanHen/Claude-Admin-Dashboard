@@ -14,12 +14,22 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
 const port = process.env.HQ_PORT ?? 4317
-const MARK = `127.0.0.1:${port}/api/hook`
+const MARK = `127.0.0.1:${port}/api/`
 const STATUS_MARK = 'claude-hq-statusline'
 const EVENTS = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Notification', 'Stop', 'SubagentStop']
 const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PermissionRequest'])
+const wait = Number(process.env.HQ_APPROVAL_WAIT ?? 120)
 
-const command = `curl -s -m 1 -o /dev/null -X POST -H 'content-type: application/json' --data-binary @- http://${MARK} || true`
+// $PPID is the claude process running the hook, so HQ can stop that session when you send someone home.
+const post = `curl -s -X POST -H 'content-type: application/json' -H "x-claude-pid: $PPID" --data-binary @-`
+const command = `${post} -m 1 -o /dev/null http://${MARK}hook || true`
+// Prompt and tool hooks print HQ's reply, which is how the 5 hour budget asks a
+// session to wrap up or holds its next step. Normally the reply is just {}.
+const ADVISED = new Set(['UserPromptSubmit', 'PreToolUse', 'PostToolUse'])
+const advisedCommand = `${post} -f -m 1 http://${MARK}hook || true`
+// Permission requests wait for your answer in HQ and print it for Claude Code.
+// If HQ is closed or you don't answer, the output is empty and the terminal asks.
+const permissionCommand = `${post} -m ${wait + 5} http://${MARK}permission || true`
 
 const uninstall = process.argv.includes('--uninstall')
 const withStatus = process.argv.includes('--statusline')
@@ -41,7 +51,9 @@ for (const ev of Object.keys(hooks)) {
 }
 if (!uninstall) {
   for (const ev of EVENTS) {
-    const group = { hooks: [{ type: 'command', command, timeout: 2 }] }
+    const group = ev === 'PermissionRequest'
+      ? { hooks: [{ type: 'command', command: permissionCommand, timeout: wait + 10 }] }
+      : { hooks: [{ type: 'command', command: ADVISED.has(ev) ? advisedCommand : command, timeout: 2 }] }
     if (TOOL_EVENTS.has(ev)) group.matcher = '*'
     ;(hooks[ev] ??= []).push(group)
   }
