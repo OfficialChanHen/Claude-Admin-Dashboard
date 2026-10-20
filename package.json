@@ -12,7 +12,8 @@
     "start": "npm run start -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
     "hooks:install": "node scripts/install-hooks.mjs",
-    "hooks:uninstall": "node scripts/install-hooks.mjs --uninstall"
+    "hooks:uninstall": "node scripts/install-hooks.mjs --uninstall",
+    "test": "npm run test -w web && npm run test -w server"
   },
   "devDependencies": {
     "concurrently": "^9.2.5"

@@ -10,6 +10,7 @@ import { startTranscripts, recentEvents, isReady } from './transcripts.js'
 import { startLimits, getLimits, acceptStatusLine } from './limits.js'
 import { handleHook } from './hooks.js'
 import { activeSessions, dbStats, listSessions, sessionDetail, usageSummary } from './usage.js'
+import { parsePrompt, runningPrompts, startPrompt } from './prompt.js'
 
 const app = Fastify({ logger: { level: 'warn' }, bodyLimit: 2 * 1024 * 1024 })
 await app.register(websocket)
@@ -75,6 +76,22 @@ app.get<{ Querystring: { range?: string; project?: string; limit?: string } }>('
 app.get<{ Params: { id: string } }>('/api/sessions/:id', async (req, reply) => sessionDetail(req.params.id) ?? reply.code(404).send({ error: 'No such session.' }))
 app.get('/api/limits', async () => getLimits())
 app.get('/api/active', async () => activeSessions(Date.now() - ACTIVE_WINDOW_MS))
+
+// Send a prompt to a project: starts the claude CLI there.
+app.post('/api/prompt', async (req, reply) => {
+  const parsed = parsePrompt((req.body ?? {}) as never)
+  if ('error' in parsed) return reply.code(400).send({ error: parsed.error })
+  const project = listProjects().find((p) => p.id === parsed.projectId)
+  if (!project) return reply.code(400).send({ error: 'That project is not in HQ.' })
+  if (!fs.existsSync(project.path)) return reply.code(400).send({ error: 'That project folder is gone.' })
+  try {
+    const { resumed } = startPrompt(parsed, project.path)
+    return { ok: true, resumed }
+  } catch {
+    return reply.code(500).send({ error: 'Claude Code could not be started.' })
+  }
+})
+app.get('/api/prompt', async () => runningPrompts())
 
 // Hook and status line endpoints. They answer fast and never fail the caller.
 app.post('/api/hook', async (req) => {

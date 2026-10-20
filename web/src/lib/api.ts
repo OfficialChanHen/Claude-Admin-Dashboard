@@ -35,7 +35,7 @@ export type LiveEvent =
   | { kind: 'say'; sessionId: string; projectId: string | null; agentId: string | null; text: string; ts: number }
   | { kind: 'think'; sessionId: string; projectId: string | null; agentId: string | null; ts: number }
   | { kind: 'usage'; sessionId: string; projectId: string | null; agentId: string | null; requestId: string; model: string; input: number; output: number; cacheRead: number; cacheWrite: number; ts: number }
-  | { kind: 'agent_start'; sessionId: string; projectId: string | null; agentId: string; agentType: string | null; description: string | null; model: string | null; ts: number }
+  | { kind: 'agent_start'; sessionId: string; projectId: string | null; agentId: string; agentType: string | null; description: string | null; model: string | null; toolUseId?: string | null; ts: number }
   | { kind: 'session'; sessionId: string; projectId: string | null; state: SessionState; title?: string | null; ts: number }
   | { kind: 'limits'; limits: Limits }
   | { kind: 'projects' }
@@ -91,5 +91,7 @@ export const api = {
   session: (id: string) => req<SessionDetail>(`/api/sessions/${id}`),
   active: () => req<ActiveSession[]>('/api/active'),
   limits: () => req<Limits | null>('/api/limits'),
+  prompt: (body: { projectId: string; text: string; mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan' }) =>
+    req<{ ok: true; resumed: string | null }>('/api/prompt', { method: 'POST', body: JSON.stringify(body) }),
   status: () => req<{ ready: boolean; progress: { done: number; total: number } }>('/api/status'),
 }

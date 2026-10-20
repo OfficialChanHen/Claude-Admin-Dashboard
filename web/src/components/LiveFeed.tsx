@@ -2,6 +2,8 @@ import type { ActiveSession, Project } from '../lib/api'
 import { ago, clock, tokens } from '../lib/format'
 import { useNow } from '../lib/useLive'
 import { zoneColor } from './ProjectsPanel'
+import { PixelIcon } from './PixelIcon'
+import { toolIcon } from '../lib/pixelIcons'
 
 export type FeedItem =
   | { type: 'prompt'; key: string; ts: number; sessionId: string; projectId: string | null; text: string }
@@ -12,10 +14,6 @@ export type FeedItem =
       tool: string; summary: string; requestId: string | null; done: boolean; isError: boolean; resultTokens: number
     }
 
-const ICON: Record<string, string> = {
-  Read: '▤', Edit: '✎', Write: '✚', NotebookEdit: '✎', Bash: '>_', Grep: '⌕', Glob: '⌕',
-  WebSearch: '◎', WebFetch: '◎', Agent: '◆', Task: '◆', TodoWrite: '☑', Skill: '★',
-}
 
 export function LiveFeed({
   items,
@@ -38,7 +36,6 @@ export function LiveFeed({
     <section className="panel" style={{ flex: 1 }} aria-labelledby="live-title">
       <div className="panel-head">
         <h2 className="panel-title" id="live-title">Live</h2>
-        <span className="proj-meta">The world view goes here next. For now, every action as it happens.</span>
       </div>
       {active.length > 0 && (
         <div className="sessions" aria-label="Open sessions">
@@ -74,7 +71,7 @@ export function LiveFeed({
                 return (
                   <li key={it.key} className="ev">
                     <span className="ev-time">{clock(it.ts)}</span>
-                    <span className="ev-icon" aria-hidden>?</span>
+                    <span className="ev-icon" aria-hidden><PixelIcon name="arrow" /></span>
                     <div className="ev-main">
                       {head}
                       <div className="bubble you">{it.text}</div>
@@ -87,7 +84,7 @@ export function LiveFeed({
                 return (
                   <li key={it.key} className="ev">
                     <span className="ev-time">{clock(it.ts)}</span>
-                    <span className="ev-icon" aria-hidden>“</span>
+                    <span className="ev-icon" aria-hidden><PixelIcon name="quote" /></span>
                     <div className="ev-main">
                       {head}
                       <div className="bubble">{it.text}</div>
@@ -100,7 +97,7 @@ export function LiveFeed({
                 return (
                   <li key={it.key} className="ev">
                     <span className="ev-time">{clock(it.ts)}</span>
-                    <span className="ev-icon" aria-hidden>◆</span>
+                    <span className="ev-icon" aria-hidden><PixelIcon name="person" /></span>
                     <div className="ev-main">
                       {head}
                       <div className="ev-line"><span className="ev-tool">New helper</span>{it.description ?? it.agentType}</div>
@@ -113,7 +110,7 @@ export function LiveFeed({
               return (
                 <li key={it.key} className="ev">
                   <span className="ev-time">{clock(it.ts)}</span>
-                  <span className="ev-icon" aria-hidden>{ICON[it.tool] ?? '•'}</span>
+                  <span className="ev-icon" aria-hidden><PixelIcon name={toolIcon(it.tool)} /></span>
                   <div className="ev-main">
                     {head}
                     <div className="ev-line" title={it.summary}>

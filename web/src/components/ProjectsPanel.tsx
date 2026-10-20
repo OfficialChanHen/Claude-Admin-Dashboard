@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api, type ActiveSession, type Project } from '../lib/api'
+import { PixelIcon } from './PixelIcon'
 
 const ZONES = ['sage', 'clay', 'sky', 'wheat', 'plum', 'fern', 'rose', 'stone']
 
@@ -16,7 +17,7 @@ function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: 
   )
 }
 
-function ProjectEditor({ p, onDone }: { p: Project; onDone: () => void }) {
+export function ProjectEditor({ p, onDone }: { p: Project; onDone: () => void }) {
   const [aliases, setAliases] = useState(p.aliases.join(', '))
   const [prodUrl, setProdUrl] = useState(p.prodUrl ?? '')
   const [devPort, setDevPort] = useState(p.devPort ? String(p.devPort) : '')
@@ -168,7 +169,7 @@ export function ProjectsPanel({
                   )}
                 </button>
                 <button className="icon-btn" aria-label={`Edit ${p.name}`} aria-expanded={editing === p.id} onClick={() => setEditing(editing === p.id ? null : p.id)}>
-                  ⋯
+                  <PixelIcon name="dots" size={14} />
                 </button>
                 <span style={{ paddingRight: 12 }}>
                   <Switch label={`Show ${p.name}`} checked={p.enabled} onChange={(v) => api.updateProject(p.id, { enabled: v })} />

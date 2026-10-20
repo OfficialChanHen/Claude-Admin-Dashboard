@@ -1,0 +1,6 @@
+Art in this folder is by Kenney (www.kenney.nl), released under
+Creative Commons Zero (CC0): http://creativecommons.org/publicdomain/zero/1.0/
+Free to use in personal, educational and commercial projects. Credit is not required.
+
+indoor.png  Roguelike Indoors pack, tilesheet with a 1 px gap between 16 px tiles
+urban.png   RPG Urban pack, packed tilemap (16 px tiles, no gap)

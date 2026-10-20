@@ -8,7 +8,7 @@ export type LiveEvent =
   | { kind: 'say'; sessionId: string; projectId: string | null; agentId: string | null; text: string; ts: number }
   | { kind: 'think'; sessionId: string; projectId: string | null; agentId: string | null; ts: number }
   | { kind: 'usage'; sessionId: string; projectId: string | null; agentId: string | null; requestId: string; model: string; input: number; output: number; cacheRead: number; cacheWrite: number; ts: number }
-  | { kind: 'agent_start'; sessionId: string; projectId: string | null; agentId: string; agentType: string | null; description: string | null; model: string | null; ts: number }
+  | { kind: 'agent_start'; sessionId: string; projectId: string | null; agentId: string; agentType: string | null; description: string | null; model: string | null; toolUseId?: string | null; ts: number }
   | { kind: 'session'; sessionId: string; projectId: string | null; state: SessionState; title?: string | null; ts: number }
   | { kind: 'limits'; limits: unknown }
   | { kind: 'projects' }

@@ -288,7 +288,7 @@ function registerAgent(ctx: Ctx, file: string) {
   const s = get<{ project_id: string | null }>('SELECT project_id FROM sessions WHERE id = ?', ctx.sessionId)
   emit(ctx, {
     kind: 'agent_start', sessionId: ctx.sessionId, projectId: s?.project_id ?? null, agentId: ctx.agentId,
-    agentType: meta.agentType ?? null, description: meta.description ?? null, model: meta.model ?? null, ts: now,
+    agentType: meta.agentType ?? null, description: meta.description ?? null, model: meta.model ?? null, toolUseId: meta.toolUseId ?? null, ts: now,
   })
 }
 

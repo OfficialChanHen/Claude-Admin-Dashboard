@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type Project, type SessionDetail } from '../lib/api'
+import { PixelIcon } from './PixelIcon'
 import { clock, duration, shortModel, tokens, usd } from '../lib/format'
 
 export function SessionDrawer({ id, projects, onClose }: { id: string; projects: Map<string, Project>; onClose: () => void }) {
@@ -25,7 +26,7 @@ export function SessionDrawer({ id, projects, onClose }: { id: string; projects:
       <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           <h2 className="panel-title" id="drawer-title">{d?.session.title ?? 'Session'}</h2>
-          <button className="icon-btn" aria-label="Close" onClick={onClose}>✕</button>
+          <button className="icon-btn" aria-label="Close" onClick={onClose}><PixelIcon name="close" size={12} /></button>
         </div>
         <div className="scroll panel-body">
           {error && <div className="chip err" role="alert">{error}</div>}
