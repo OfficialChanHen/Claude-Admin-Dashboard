@@ -59,11 +59,19 @@ describe('Camera', () => {
     expect(c.zoomAt(500, 300, -1)).toBe(false)
   })
 
-  it('never zooms out past the point where the world fits', () => {
+  it('zooms out far enough to show the whole world', () => {
     const c = cam(1000, 600, 300, 200)
-    expect(c.pMin).toBe(3)
-    const small = cam(1000, 600, 2000, 1200)
-    expect(small.pMin).toBe(1)
+    expect(c.pMin).toBe(3) // 600 / 200; at 4 the bottom would be cut off
+    const big = cam(1000, 600, 2000, 1200)
+    expect(big.pMin).toBe(1)
+    const tiny = cam(1000, 600, 50, 50, 1)
+    expect(tiny.pMax).toBe(tiny.pMin)
+    tiny.P = tiny.pMin
+    tiny.clamp()
+    expect(tiny.toScreen(0, 0).x).toBeGreaterThanOrEqual(0)
+    expect(tiny.toScreen(0, 0).y).toBeGreaterThanOrEqual(0)
+    expect(tiny.toScreen(50, 50).x).toBeLessThanOrEqual(1000)
+    expect(tiny.toScreen(50, 50).y).toBeLessThanOrEqual(600)
   })
 
   it('centres a world smaller than the screen', () => {

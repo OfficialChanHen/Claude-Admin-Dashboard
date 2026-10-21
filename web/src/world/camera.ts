@@ -11,7 +11,7 @@ export class Camera {
   vh = 1
   worldW = 1
   worldH = 1
-  pMax = 8
+  private maxP = 8
   /** Inside a room, the part of the world the camera keeps to. */
   bounds: { x: number; y: number; w: number; h: number } | null = null
   private target: { x: number; y: number; P?: number } | null = null
@@ -30,7 +30,7 @@ export class Camera {
   setViewport(vw: number, vh: number, dpr: number) {
     this.vw = Math.max(1, vw)
     this.vh = Math.max(1, vh)
-    this.pMax = Math.max(4, Math.round(6 * dpr))
+    this.maxP = Math.max(4, Math.round(6 * dpr))
     this.P = Math.min(Math.max(this.P, this.pMin), this.pMax)
     this.clamp()
   }
@@ -41,9 +41,14 @@ export class Camera {
     this.clamp()
   }
 
-  /** Zoomed out far enough to see the whole world, but never below 1. */
+  /** As far out as you can zoom: the whole world on screen, but never below 1. */
   get pMin() {
-    return Math.max(1, Math.min(Math.floor(this.vw / this.worldW), Math.floor(this.vh / this.worldH)))
+    return Math.max(1, Math.floor(Math.min(this.vw / this.worldW, this.vh / this.worldH)))
+  }
+
+  /** As far in as you can zoom. Never below pMin. */
+  get pMax() {
+    return Math.max(this.maxP, this.pMin)
   }
 
   /** Where world (0, 0) lands on screen, rounded so tiles line up on pixels. */
