@@ -153,9 +153,17 @@ function ensureSession(sid: string, e: Entry, ts: number): SessionRow {
   return s
 }
 
+// When each session started waiting for your OK. The permission hook usually lands
+// before the log lines around it are read, so only lines written after it may end the wait.
+const waitingSince = new Map<string, number>()
+const waitingAfter = (sid: string, ts: number) => ts > (waitingSince.get(sid) ?? Infinity)
+const waitingBefore = (sid: string, ts: number) => ts <= (waitingSince.get(sid) ?? -Infinity)
+
 export function setSessionState(sid: string, state: SessionState, live = true) {
   const s = get<SessionRow>('SELECT id, project_id, state FROM sessions WHERE id = ?', sid)
   if (!s || s.state === state) return
+  if (state === 'waiting') waitingSince.set(sid, Date.now())
+  else waitingSince.delete(sid)
   run('UPDATE sessions SET state = ? WHERE id = ?', state, sid)
   if (live) {
     const ev: LiveEvent = { kind: 'session', sessionId: sid, projectId: s.project_id, state, ts: Date.now() }
@@ -210,6 +218,11 @@ function handle(ctx: Ctx, e: Entry) {
           text += b.text ?? ''
         }
       }
+      if (ctx.live && !ctx.agentId && waitingAfter(sid, ts)) {
+        // Answered: an interruption means you said no, a result means it carries on.
+        if (text.trimStart().startsWith('[Request interrupted')) setSessionState(sid, 'idle')
+        else if (content.some((b) => b.type === 'tool_result')) setSessionState(sid, 'working')
+      }
       if (text) addPrompt(ctx, e, s, text, ts)
     } else if (typeof content === 'string') {
       addPrompt(ctx, e, s, content, ts)
@@ -259,7 +272,8 @@ function handle(ctx: Ctx, e: Entry) {
     }
   }
   if (ctx.live && !ctx.agentId) {
-    setSessionState(sid, msg.stop_reason === 'end_turn' ? 'idle' : 'working')
+    // The tool call they are asking about is older than the wait, so it must not clear it.
+    if (!waitingBefore(sid, ts)) setSessionState(sid, msg.stop_reason === 'end_turn' ? 'idle' : 'working')
   }
 }
 
