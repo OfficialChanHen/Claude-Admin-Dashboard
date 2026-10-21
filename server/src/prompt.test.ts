@@ -5,7 +5,7 @@ vi.mock('./db.js', () => ({ get: vi.fn(() => ({ id: 'sess-1' })) }))
 vi.mock('./config.js', () => ({ DATA_DIR: '/tmp', PORT: 4317 }))
 vi.mock('./stop.js', () => ({ notePid: vi.fn() }))
 
-const { claudeArgs, parsePrompt } = await import('./prompt.js')
+const { claudeArgs, parsePrompt, sessionTarget } = await import('./prompt.js')
 
 describe('parsePrompt', () => {
   it('needs a project and some text', () => {
@@ -29,6 +29,32 @@ describe('parsePrompt', () => {
 
   it('keeps plan mode and continue when asked', () => {
     expect(parsePrompt({ projectId: 'p', text: 'x', mode: 'continue', permissionMode: 'plan' })).toMatchObject({ mode: 'continue', permissionMode: 'plan' })
+  })
+
+  it('carries on the session you picked, with or without a project', () => {
+    expect(parsePrompt({ sessionId: 's', text: 'x', mode: 'new' })).toEqual({ projectId: '', sessionId: 's', text: 'x', mode: 'continue', permissionMode: 'acceptEdits' })
+    expect(parsePrompt({ projectId: 'p', sessionId: 's', text: 'x' })).toMatchObject({ projectId: 'p', sessionId: 's', mode: 'continue' })
+    expect(parsePrompt({ projectId: 'p', text: 'x' })).not.toHaveProperty('sessionId')
+  })
+})
+
+describe('sessionTarget', () => {
+  const row = { project_id: 'p', cwd: '/work/p/sub', state: 'idle' }
+
+  it('runs in the project folder, or where the session ran when it has no project', () => {
+    expect(sessionTarget(row, '/work/p')).toEqual({ cwd: '/work/p', projectId: 'p' })
+    expect(sessionTarget({ ...row, project_id: null }, null)).toEqual({ cwd: '/work/p/sub', projectId: '' })
+    expect(sessionTarget({ ...row, state: 'ended' }, '/work/p')).toMatchObject({ cwd: '/work/p' })
+  })
+
+  it('waits for someone who is mid-task', () => {
+    expect(sessionTarget({ ...row, state: 'working' }, '/work/p')).toMatchObject({ busy: true })
+    expect(sessionTarget({ ...row, state: 'waiting' }, '/work/p')).toMatchObject({ busy: true })
+  })
+
+  it('refuses a session it cannot place', () => {
+    expect(sessionTarget(undefined, null)).toHaveProperty('error')
+    expect(sessionTarget({ ...row, project_id: null, cwd: null }, null)).toHaveProperty('error')
   })
 })
 

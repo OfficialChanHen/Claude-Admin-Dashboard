@@ -117,3 +117,26 @@ describe('canSpend', () => {
     expect(canSpend(readBudget(at(97, 20), NOW), fresh, false, NOW)).toBe(false)
   })
 })
+
+describe('runQueued', async () => {
+  const db = await import('./db.js')
+  const { listProjects } = await import('./projects.js')
+  const { startPrompt } = await import('./prompt.js')
+  const hq = await import('./budget.js')
+  const task = (id: string, project_id: string) => ({ id, project_id, text: `do ${id}`, permission_mode: 'plan' })
+
+  it('starts the tasks you ask for now, as yours, and drops one whose project is gone', () => {
+    vi.mocked(listProjects).mockReturnValue([{ id: 'p', path: process.cwd() }] as never)
+    vi.mocked(db.all).mockReturnValueOnce([task('a', 'p'), task('b', 'gone')] as never)
+    vi.mocked(startPrompt).mockReturnValue({ sessionId: 'sess-a' } as never)
+    expect(hq.runQueued(undefined, NOW)).toEqual({ found: 2, started: ['a'], missing: ['b'] })
+    expect(startPrompt).toHaveBeenCalledWith({ projectId: 'p', text: 'do a', mode: 'new', permissionMode: 'plan' }, process.cwd())
+    expect(db.run).toHaveBeenCalledWith(expect.stringContaining('started_at'), NOW, 'b')
+    expect(hq.governor.pilot.has('sess-a')).toBe(false)
+  })
+
+  it('finds nothing when the task already started', () => {
+    vi.mocked(db.all).mockReturnValueOnce([])
+    expect(hq.runQueued('x', NOW)).toEqual({ found: 0, started: [], missing: [] })
+  })
+})

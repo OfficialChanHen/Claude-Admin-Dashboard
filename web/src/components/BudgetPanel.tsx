@@ -59,14 +59,19 @@ export function BudgetPanel({ projects, refreshKey }: { projects: Map<string, Pr
         <p className="note">Nothing paused.</p>
       )}
 
-      <h3 className="budget-head">Queued for spare usage</h3>
+      <div className="budget-head-row">
+        <h3 className="budget-head">Queued for spare usage</h3>
+        {budget.queue.length > 1 && <button className="btn small" onClick={() => remove(api.runQueued())}>Run all now</button>}
+      </div>
       {budget.queue.length ? (
         <ul className="budget-list">
           {budget.queue.map((q) => (
             <li key={q.id}>
               <span className="budget-text">
                 <b>{name(q.projectId)}</b> {q.text.length > 120 ? `${q.text.slice(0, 120)}...` : q.text}
+                <span className="note"> {q.permissionMode === 'plan' ? 'plan first, ' : ''}added {ago(q.addedAt, now)}</span>
               </span>
+              <button className="btn small" onClick={() => remove(api.runQueued(q.id))}>Run now</button>
               <button className="btn small" onClick={() => remove(api.unqueue(q.id))}>Remove</button>
             </li>
           ))}

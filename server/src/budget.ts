@@ -158,20 +158,42 @@ export function spendSpare(now = Date.now()) {
     return { resumed: row.session_id }
   }
 
-  const queued = all<{ id: string; project_id: string; text: string; permission_mode: string }>(
-    'SELECT id, project_id, text, permission_mode FROM queue WHERE started_at IS NULL ORDER BY added_at',
-  )
+  const queued = all<Queued>('SELECT id, project_id, text, permission_mode FROM queue WHERE started_at IS NULL ORDER BY added_at')
   for (const q of queued) {
-    run('UPDATE queue SET started_at = ? WHERE id = ?', now, q.id)
-    const project = projects.get(q.project_id)
-    if (!project || !fs.existsSync(project.path)) continue
-    const permissionMode = PERMISSION_MODES.includes(q.permission_mode as PermissionMode) ? (q.permission_mode as PermissionMode) : 'acceptEdits'
-    const { sessionId } = startPrompt({ projectId: project.id, text: q.text, mode: 'new', permissionMode }, project.path)
+    const sessionId = startQueued(q, projects, now)
+    if (!sessionId) continue
     governor.pilot.add(sessionId)
-    bus.publish({ kind: 'budget' })
     return { started: q.id }
   }
   return null
+}
+
+type Queued = { id: string; project_id: string; text: string; permission_mode: string }
+
+/** Takes a task off the queue and starts it. A task whose project is gone is dropped. */
+function startQueued(q: Queued, projects: Map<string, { id: string; path: string }>, now: number) {
+  run('UPDATE queue SET started_at = ? WHERE id = ?', now, q.id)
+  bus.publish({ kind: 'budget' })
+  const project = projects.get(q.project_id)
+  if (!project || !fs.existsSync(project.path)) return null
+  const permissionMode = PERMISSION_MODES.includes(q.permission_mode as PermissionMode) ? (q.permission_mode as PermissionMode) : 'acceptEdits'
+  return startPrompt({ projectId: project.id, text: q.text, mode: 'new', permissionMode }, project.path).sessionId
+}
+
+/**
+ * Starts queued tasks now instead of waiting for spare usage: one, or all of
+ * them when no id is given. You asked for it, so they are not HQ's pilots and
+ * a prompt you type to them past the limit still runs.
+ */
+export function runQueued(id?: string, now = Date.now()) {
+  const projects = new Map(listProjects().map((p) => [p.id, p]))
+  const queued = id
+    ? all<Queued>('SELECT id, project_id, text, permission_mode FROM queue WHERE id = ? AND started_at IS NULL', id)
+    : all<Queued>('SELECT id, project_id, text, permission_mode FROM queue WHERE started_at IS NULL ORDER BY added_at')
+  const started: string[] = []
+  const missing: string[] = []
+  for (const q of queued) (startQueued(q, projects, now) ? started : missing).push(q.id)
+  return { found: queued.length, started, missing }
 }
 
 export function queuePrompt(projectId: string, text: string, permissionMode: PermissionMode) {

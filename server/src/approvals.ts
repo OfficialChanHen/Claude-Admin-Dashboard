@@ -34,11 +34,16 @@ export class Approvals {
 
   constructor(private publish: (ev: ApprovalEvent) => void, private waitMs: number) {}
 
-  ask(req: Omit<Approval, 'id' | 'ts' | 'expiresAt'>, now = Date.now()): { id: string | null; decision: Promise<Decision | null> } {
+  /** `waitMs` overrides how long this one request is held. */
+  ask(
+    req: Omit<Approval, 'id' | 'ts' | 'expiresAt'>,
+    now = Date.now(),
+    waitMs = this.waitMs,
+  ): { id: string | null; decision: Promise<Decision | null> } {
     if (this.viewers <= 0) return { id: null, decision: Promise.resolve(null) }
-    const a: Approval = { ...req, id: randomUUID(), ts: now, expiresAt: now + this.waitMs }
+    const a: Approval = { ...req, id: randomUUID(), ts: now, expiresAt: now + waitMs }
     const decision = new Promise<Decision | null>((resolve) => {
-      const timer = setTimeout(() => this.decide(a.id, null), this.waitMs)
+      const timer = setTimeout(() => this.decide(a.id, null), waitMs)
       this.pending.set(a.id, { a, resolve, timer })
     })
     this.publish({ kind: 'approval', approval: a })

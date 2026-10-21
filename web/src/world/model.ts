@@ -1,4 +1,4 @@
-import type { ActiveSession, LiveEvent, SessionState } from '../lib/api'
+import type { ActiveSession, LiveEvent, Role, SessionState } from '../lib/api'
 import { JUNIOR_SLOTS, SENIOR_SLOTS, route, type BreakSpot, type Facing, type Office, type Pod, type Point } from './office'
 import { TASKS, taskOf, type Station, type TaskKind } from './tasks'
 
@@ -36,6 +36,8 @@ export type Sprite = {
   speed: number
   seed: number
   label: string
+  /** Set for HQ's own managers and the boss, who go by their role instead of a title. */
+  role?: Role | null
   state: SessionState
   activity: Activity
   station: Station
@@ -66,6 +68,11 @@ export type Sprite = {
 
 export const OTHER = '_other'
 export const MAX_JUNIORS_PER_SESSION = 3
+
+/** What a person is called in the office: HQ's managers and boss by their role, everyone else by their session title. */
+export function nameOf(a: Pick<ActiveSession, 'title' | 'role'>) {
+  return a.role === 'boss' ? 'The boss' : a.role === 'manager' ? 'Manager' : a.title ?? 'Untitled session'
+}
 
 const RECENT_MS = 20_000 // older events update state but show no bubbles
 const HELPER_MAX_AGE_MS = 120_000
@@ -238,7 +245,8 @@ export class WorldModel {
     for (const a of active) {
       const s = this.sprites.get(a.id)
       if (s) {
-        s.label = a.title ?? 'Untitled session'
+        s.role = a.role ?? null
+        s.label = nameOf(a)
         const zone = a.projectId ?? OTHER
         if (s.zone !== zone) {
           this.release(s)
@@ -248,7 +256,7 @@ export class WorldModel {
         }
         if (s.state !== a.state) this.setState(s, a.state, now)
       } else if (a.state !== 'ended') {
-        this.make({ sessionId: a.id, agentId: null, zone: a.projectId ?? OTHER, atDoor: now - a.lastAt < RECENT_MS, state: a.state, ts: a.lastAt, label: a.title ?? 'Untitled session', now })
+        this.make({ sessionId: a.id, agentId: null, zone: a.projectId ?? OTHER, atDoor: now - a.lastAt < RECENT_MS, state: a.state, ts: a.lastAt, label: nameOf(a), now }).role = a.role ?? null
       }
     }
     for (const s of this.sprites.values()) {
@@ -418,7 +426,7 @@ export class WorldModel {
       case 'session': {
         const s = this.sprites.get(ev.sessionId)
         if (s && s.rank === 'senior') {
-          if (ev.title) s.label = ev.title
+          if (ev.title && !s.role) s.label = ev.title
           if (s.state !== ev.state) this.setState(s, ev.state, now)
         }
         if (ev.state === 'ended') {

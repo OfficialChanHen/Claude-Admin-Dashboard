@@ -71,10 +71,14 @@ npm test               # unit tests for the office, the people and the prompt en
 
 Open http://127.0.0.1:4318 in a browser on Windows. WSL forwards localhost.
 
-## Live states (optional, recommended)
+## Live states
+
+`npm run dev` and `npm start` add HQ's hooks to `~/.claude/settings.json`
+before they start, so approvals, ending sessions and the budget always work.
+When the hooks are already there, nothing is written.
 
 ```bash
-npm run hooks:install                  # adds hooks to ~/.claude/settings.json
+npm run hooks:install                  # the same thing by hand
 npm run hooks:install -- --statusline  # also sends fresher plan limits from the CLI status line
 npm run hooks:uninstall                # takes them out again
 ```
@@ -83,8 +87,11 @@ With the hooks installed, a session asking for permission shows up in HQ with
 Allow, Deny and "Ask in terminal". While HQ is open, the request waits there
 for up to 2 minutes (`HQ_APPROVAL_WAIT` seconds, set it before installing the
 hooks), then goes to the terminal as usual. With HQ closed, nothing waits.
+Sessions started from HQ have no terminal, so they wait 50 seconds at most
+(Claude Code gives up on the request at about a minute) and are told the step
+did not run.
 
-Your old settings file is backed up to `data/backups/` each time. Hooks tell
+Your old settings file is backed up to `data/backups/` each time it changes. Hooks tell
 HQ when a session is waiting for your approval and when it ends, and which
 process runs each session, so sending someone home stops the right one. Run
 the install again after updating HQ to pick up new hooks. Without hooks, HQ

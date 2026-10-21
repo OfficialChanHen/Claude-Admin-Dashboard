@@ -31,6 +31,21 @@ export const ACTIVE_WINDOW_MS = 10 * 60 * 1000
 // asks in the terminal instead. scripts/install-hooks.mjs reads the same variable.
 export const APPROVAL_WAIT_MS = Number(process.env.HQ_APPROVAL_WAIT ?? 120) * 1000
 
+// Sessions HQ starts ask through its MCP prompt tool, and Claude Code drops an
+// MCP request after about 60 seconds. HQ answers before that, so the session
+// is told nobody answered instead of failing with a bare timeout.
+export const HEADLESS_APPROVAL_WAIT_MS = Math.min(APPROVAL_WAIT_MS, 50_000)
+
+// Managers and the boss (see hierarchy.ts). Each round is a real prompt on your
+// plan, so a manager or the boss reports at most once per HQ_REPORT_MIN
+// minutes, and only when something new happened. HQ_HIERARCHY=off turns them off.
+export const HIERARCHY = {
+  on: process.env.HQ_HIERARCHY !== 'off',
+  everyMs: Number(process.env.HQ_REPORT_MIN ?? 10) * 60_000,
+  // Prompts one round may send to the rank below, so a round can't start a storm.
+  promptsPerRound: 2,
+}
+
 // The 5 hour budget (see budget.ts). Sessions are asked to wrap up at
 // HQ_WRAP_AT percent and kept from starting new steps at HQ_STOP_AT. In the
 // last HQ_SPARE_MIN minutes before the window resets, whatever is left goes to

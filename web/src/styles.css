@@ -245,6 +245,11 @@ button.hud-plate:hover { border-color: var(--accent); }
   white-space: nowrap;
 }
 .key-chip .pixel-icon { color: var(--accent-text); }
+/* Role tags, matching the ones drawn under people's feet */
+.key-chip.role-boss { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); font-weight: 700; }
+.key-chip.role-manager { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); font-weight: 700; }
+.key-chip.role-agent { background: var(--accent-bg); border-color: var(--accent); color: var(--accent-text); font-weight: 700; }
+.key-chip.role-helper { color: var(--text-2); font-weight: 700; }
 .key-screen { width: 22px; height: 18px; image-rendering: pixelated; }
 .key-lamp { width: 8px; height: 8px; border: 2px solid #472d3c; }
 
@@ -262,7 +267,8 @@ button.hud-plate:hover { border-color: var(--accent); }
 }
 .prompt-empty { text-align: center; color: var(--text-2); font-size: 13px; width: auto; padding: 8px 16px; }
 .prompt-to { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.prompt-name { font-family: var(--font-pixel); font-size: 15px; margin-right: auto; }
+.prompt-name { font-family: var(--font-pixel); font-size: 15px; margin-right: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-sub { font-family: var(--font-ui); font-size: 12px; color: var(--text-3); margin-left: 8px; }
 .prompt-row { display: flex; gap: 8px; align-items: flex-end; }
 .prompt-input { resize: none; min-height: 40px; max-height: 140px; field-sizing: content; line-height: 1.4; }
 .prompt-note { font-size: 12px; color: var(--ok); }
@@ -298,9 +304,81 @@ button.hud-plate:hover { border-color: var(--accent); }
 .budget .chip { white-space: normal; justify-self: start; }
 .budget .chip.warn { background: var(--warn-bg); color: var(--warn); }
 .budget-head { font-size: 13px; margin: 4px 0 0; }
+.budget-head-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* Always in view while tasks wait for spare usage; building windows open over it */
+.hud-right { position: absolute; top: 12px; right: 12px; z-index: 12; display: flex; gap: 8px; }
+.queue-plate { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+.queue-plate .pixel-icon { color: var(--accent-text); }
+/* Requests waiting for your OK: the plate, and the list it opens */
+.needs-ok-group { display: flex; gap: 4px; }
+.queue-plate.needs-ok {
+  background: var(--turn); border-color: var(--turn); color: var(--bg); font-weight: 700;
+  font-size: 15px; padding: 8px 14px; animation: needs-ok 1.4s ease-in-out infinite;
+}
+.queue-plate.needs-ok .pixel-icon, .queue-plate.needs-ok:hover { color: var(--bg); }
+.needs-ok-left { font-variant-numeric: tabular-nums; padding: 1px 6px; border-radius: 3px; background: rgb(0 0 0 / 0.2); }
+.needs-ok-left.soon { background: var(--bad); }
+.needs-ok-mute { padding: 6px 8px; }
+@keyframes needs-ok { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--turn) 35%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .queue-plate.needs-ok { animation: none; } }
+.approvals-list {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(380px, calc(100vw - 24px));
+  max-height: min(60vh, 480px);
+  overflow: auto;
+  padding: 6px;
+}
+.approvals-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.approvals-list .note { margin: 6px; }
+.approvals-item {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  padding: 8px;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background: var(--turn-bg);
+  cursor: pointer;
+}
+.approvals-item:hover, .approvals-item:focus-visible { border-color: var(--turn); outline: none; }
+.approvals-who { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.approvals-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.approvals-project { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.approvals-what { font-size: 13px; overflow-wrap: anywhere; }
+.approvals-left { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.approvals-left.soon { color: var(--bad); font-weight: 600; }
+/* Reports from the boss and the managers */
+.reports { display: grid; gap: 10px; }
+.report-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.report { display: grid; gap: 4px; }
+.report-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; font-weight: 600; }
+.report-time { font-size: 12px; font-weight: 400; color: var(--text-3); }
+.report.boss .chat-text { border-color: var(--accent); }
+.report-older summary { cursor: pointer; font-size: 13px; color: var(--text-2); margin-bottom: 8px; }
+.reports button.link { padding: 0; border: 0; background: none; color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer; }
 .budget-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .budget-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .budget-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+/* The conversation with its prompt box under it, one column on the left */
+.chat-dock {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  bottom: 12px;
+  width: min(440px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 15;
+  pointer-events: none;
+}
+.chat-dock > * { pointer-events: auto; }
+.chat-dock .chat-panel { position: static; flex: 1; min-height: 0; width: auto; }
+.chat-dock .prompt-bar { position: static; transform: none; width: auto; flex: none; }
 
 /* A conversation with one session, on the left so building windows can open beside it */
 .chat-panel {
@@ -337,6 +415,20 @@ button.hud-plate:hover { border-color: var(--accent); }
   font-size: 13px;
 }
 .chat-msg.you .chat-text { background: var(--accent-bg); border-color: var(--accent); }
+/* Claude's replies, formatted from markdown */
+.chat-text.md { white-space: normal; display: grid; gap: 6px; }
+.chat-text.md p { margin: 0; white-space: pre-wrap; }
+.chat-text.md .md-h { font-weight: 700; }
+.chat-text.md ul, .chat-text.md ol { margin: 0; padding-left: 20px; display: grid; gap: 2px; }
+.chat-text.md code { font: 12px/1.4 ui-monospace, 'Cascadia Mono', Consolas, monospace; background: var(--panel-3); border-radius: 3px; padding: 0 3px; }
+.chat-text.md pre { margin: 0; padding: 6px 8px; background: var(--panel-3); border-radius: 4px; overflow: auto; white-space: pre; }
+.chat-text.md pre code { background: none; padding: 0; }
+.chat-text.md .md-path { font-weight: 600; }
+.chat-text.md hr { border: 0; border-top: 2px dashed var(--line-strong); margin: 2px 0; width: 100%; }
+.md-table { overflow-x: auto; }
+.md-table table { border-collapse: collapse; font-size: 12px; }
+.md-table th, .md-table td { border: 1px solid var(--line-strong); padding: 3px 6px; text-align: left; vertical-align: top; }
+.md-table th { background: var(--panel-3); }
 .chat-steps { display: grid; gap: 2px; padding: 2px 0 2px 10px; border-left: 2px dashed var(--line-strong); }
 .chat-step { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); min-width: 0; }
 .chat-step > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -373,6 +465,7 @@ button.hud-plate:hover { border-color: var(--accent); }
 @media (max-width: 900px) {
   .game-window { top: 12px; left: 12px; right: 12px; width: auto; }
   .chat-panel { right: 12px; width: auto; bottom: 150px; }
+  .chat-dock { right: 12px; width: auto; }
 }
 .conn { font-size: 12px; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
 .dot { width: 8px; height: 8px; border-radius: 2px; background: var(--text-3); flex: none; }

@@ -10,7 +10,13 @@ export const APPROVE_TOOL = 'approve'
 export const PROMPT_TOOL = `mcp__${MCP_SERVER}__${APPROVE_TOOL}`
 
 export type PromptInput = { tool_name?: unknown; input?: unknown; tool_use_id?: unknown }
-type Rpc = { jsonrpc?: string; id?: string | number | null; method?: string; params?: { name?: string; arguments?: PromptInput; protocolVersion?: string } }
+type Rpc = { jsonrpc?: string; id?: string | number | null; method?: string; params?: { name?: string; arguments?: Record<string, unknown>; protocolVersion?: string } }
+
+/** More tools for one session, such as a manager's report and prompt tools (see hierarchy.ts). */
+export type ExtraTools = {
+  tools: { name: string; description: string; inputSchema: object }[]
+  call: (name: string, args: Record<string, unknown>) => Promise<string>
+}
 
 const TOOL = {
   name: APPROVE_TOOL,
@@ -23,7 +29,7 @@ const TOOL = {
 }
 
 /** One JSON-RPC message in, its reply out. Notifications get no reply. */
-export async function handleMcp(msg: Rpc, approve: (p: PromptInput) => Promise<PromptAnswer>): Promise<object | null> {
+export async function handleMcp(msg: Rpc, approve: (p: PromptInput) => Promise<PromptAnswer>, extra?: ExtraTools): Promise<object | null> {
   if (msg?.id === undefined || msg.id === null) return null
   const ok = (result: object) => ({ jsonrpc: '2.0', id: msg.id, result })
   const fail = (code: number, message: string) => ({ jsonrpc: '2.0', id: msg.id, error: { code, message } })
@@ -37,10 +43,15 @@ export async function handleMcp(msg: Rpc, approve: (p: PromptInput) => Promise<P
     case 'ping':
       return ok({})
     case 'tools/list':
-      return ok({ tools: [TOOL] })
+      return ok({ tools: [TOOL, ...(extra?.tools ?? [])] })
     case 'tools/call': {
-      if (msg.params?.name !== APPROVE_TOOL) return fail(-32602, 'Unknown tool.')
-      const answer = await approve(msg.params.arguments ?? {})
+      const name = msg.params?.name
+      if (extra && name && extra.tools.some((t) => t.name === name)) {
+        const text = await extra.call(name, msg.params?.arguments ?? {})
+        return ok({ content: [{ type: 'text', text }] })
+      }
+      if (name !== APPROVE_TOOL) return fail(-32602, 'Unknown tool.')
+      const answer = await approve(msg.params?.arguments ?? {})
       return ok({ content: [{ type: 'text', text: JSON.stringify(answer) }] })
     }
     default:

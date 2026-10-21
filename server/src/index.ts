@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import Fastify from 'fastify'
 import websocket from '@fastify/websocket'
 import fastifyStatic from '@fastify/static'
-import { HOST, PORT, WEB_DIST, ACTIVE_WINDOW_MS, APPROVAL_WAIT_MS } from './config.js'
+import { HOST, PORT, WEB_DIST, ACTIVE_WINDOW_MS, APPROVAL_WAIT_MS, HEADLESS_APPROVAL_WAIT_MS } from './config.js'
 import { bus, type LiveEvent } from './bus.js'
 import { all, get, run } from './db.js'
 import { addProject, listProjects, projectForCwd, removeProject, scanProjects, updateProject } from './projects.js'
@@ -13,10 +13,11 @@ import { addNote, cleanNote, listNotes, plansFor, removeNote, updateNote } from 
 import { startLimits, getLimits, acceptStatusLine } from './limits.js'
 import { handleHook } from './hooks.js'
 import { activeSessions, dbStats, listSessions, sessionDetail, usageSummary } from './usage.js'
-import { headlessSession, parsePrompt, runningPrompts, startPrompt } from './prompt.js'
+import { headlessSession, parsePrompt, runningPrompts, sessionTarget, startPrompt } from './prompt.js'
 import { SESSION_ID, stopSession } from './stop.js'
 import { sessionChat } from './chat.js'
-import { adviseHook, budgetState, dropPaused, queuePrompt, startBudget, unqueue } from './budget.js'
+import { hierarchyState, startHierarchy, toolsFor } from './hierarchy.js'
+import { adviseHook, budgetState, dropPaused, queuePrompt, runQueued, startBudget, unqueue } from './budget.js'
 
 /** The claude process a hook came from, sent by the hook command as a header. */
 function claudePid(headers: Record<string, unknown>) {
@@ -107,6 +108,21 @@ app.get('/api/active', async () => activeSessions(Date.now() - ACTIVE_WINDOW_MS)
 app.post('/api/prompt', async (req, reply) => {
   const parsed = parsePrompt((req.body ?? {}) as never)
   if ('error' in parsed) return reply.code(400).send({ error: parsed.error })
+  // To one person: carries on their conversation, in the folder it ran in.
+  if (parsed.sessionId) {
+    if (!SESSION_ID.test(parsed.sessionId)) return reply.code(400).send({ error: 'That session is not in HQ.' })
+    const row = get<{ project_id: string | null; cwd: string | null; state: string }>('SELECT project_id, cwd, state FROM sessions WHERE id = ?', parsed.sessionId)
+    const path = listProjects().find((p) => p.id === row?.project_id)?.path ?? null
+    const target = sessionTarget(row, path)
+    if ('error' in target) return reply.code(target.busy ? 409 : 400).send({ error: target.error })
+    if (!fs.existsSync(target.cwd)) return reply.code(400).send({ error: 'That session’s folder is gone.' })
+    try {
+      const { resumed } = startPrompt({ ...parsed, projectId: target.projectId }, target.cwd, parsed.sessionId)
+      return { ok: true, resumed }
+    } catch {
+      return reply.code(500).send({ error: 'Claude Code could not be started.' })
+    }
+  }
   const project = listProjects().find((p) => p.id === parsed.projectId)
   if (!project) return reply.code(400).send({ error: 'That project is not in HQ.' })
   if (!fs.existsSync(project.path)) return reply.code(400).send({ error: 'That project folder is gone.' })
@@ -151,9 +167,29 @@ app.delete<{ Params: { id: string } }>('/api/notes/:id', async (req, reply) => {
 
 // The 5 hour budget: what is paused, what is queued for spare usage.
 app.get('/api/budget', async () => budgetState())
+app.get('/api/hierarchy', async () => hierarchyState())
 app.delete<{ Params: { id: string } }>('/api/budget/queue/:id', async (req, reply) =>
   unqueue(req.params.id) ? { ok: true } : reply.code(404).send({ error: 'That task already started or was removed.' }),
 )
+// Runs queued work now: one task, or the whole queue.
+app.post<{ Params: { id: string } }>('/api/budget/queue/:id/run', async (req, reply) => {
+  try {
+    const r = runQueued(req.params.id)
+    if (!r.found) return reply.code(404).send({ error: 'That task already started or was removed.' })
+    if (r.missing.length) return reply.code(400).send({ error: 'That project folder is gone, so the task was dropped.' })
+    return { ok: true, started: r.started }
+  } catch {
+    return reply.code(500).send({ error: 'Claude Code could not be started.' })
+  }
+})
+app.post('/api/budget/queue/run', async (_req, reply) => {
+  try {
+    const r = runQueued()
+    return { ok: true, started: r.started, dropped: r.missing.length }
+  } catch {
+    return reply.code(500).send({ error: 'Claude Code could not be started.' })
+  }
+})
 app.delete<{ Params: { id: string } }>('/api/budget/paused/:id', async (req, reply) =>
   dropPaused(req.params.id) ? { ok: true } : reply.code(404).send({ error: 'That session is no longer paused.' }),
 )
@@ -217,7 +253,7 @@ async function askHeadless(sessionId: string, p: PromptInput, abort: AbortSignal
     summary: summarize(tool, input, row?.cwd ?? started?.cwd),
     detail: describeInput(tool, input),
     headless: true,
-  })
+  }, Date.now(), HEADLESS_APPROVAL_WAIT_MS)
   if (id) {
     abort.addEventListener('abort', () => approvals.decide(id, null))
     setSessionState(sessionId, 'waiting')
@@ -234,10 +270,12 @@ app.post<{ Params: { sid: string } }>('/mcp/:sid', async (req, reply) => {
   const abort = new AbortController()
   reply.raw.on('close', () => !reply.raw.writableFinished && abort.abort())
   const approve = (p: PromptInput) => askHeadless(req.params.sid, p, abort.signal)
+  // Managers and the boss also get their report and prompt tools here.
+  const extra = toolsFor(req.params.sid)
   const body = req.body as Parameters<typeof handleMcp>[0] | Parameters<typeof handleMcp>[0][]
   const out = Array.isArray(body)
-    ? (await Promise.all(body.map((m) => handleMcp(m, approve)))).filter(Boolean)
-    : await handleMcp(body, approve)
+    ? (await Promise.all(body.map((m) => handleMcp(m, approve, extra)))).filter(Boolean)
+    : await handleMcp(body, approve, extra)
   if (!out || (Array.isArray(out) && !out.length)) return reply.code(202).send()
   return out
 })
@@ -298,3 +336,4 @@ await startTranscripts((done, total) => {
 console.log(`Read ${progress.total} session logs in ${((Date.now() - t0) / 1000).toFixed(1)}s`, dbStats())
 // Spare usage waits until session states are read, so it never starts over a busy session.
 startBudget()
+startHierarchy()

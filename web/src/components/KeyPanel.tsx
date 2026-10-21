@@ -156,6 +156,16 @@ export function KeyPanel() {
           Someone in a shirt is one of your sessions. Someone in casual clothes is a helper it sent for. A helper comes in, gets a
           sheet with the task, works at a small desk, then walks the report back.
         </p>
+        <div className="key-chips">
+          <span className="key-chip role-boss">Boss</span>
+          <span className="key-chip role-manager">Manager</span>
+          <span className="key-chip role-agent">Agent</span>
+          <span className="key-chip role-helper">Helper</span>
+        </div>
+        <p className="note">
+          The tag under each person's feet is their role. The boss watches all the managers. A manager watches one project's agents.
+          An agent is one of your sessions, and a helper is a subagent an agent sent for.
+        </p>
         <Row mark={<PixelIcon name="door" />}>
           Drag one of your sessions to a door to send them home. That ends the session once you confirm. Drop them anywhere else and they walk back to their desk.
         </Row>

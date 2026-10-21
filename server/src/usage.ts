@@ -238,8 +238,9 @@ export function sessionDetail(id: string) {
 
 export function activeSessions(sinceMs: number) {
   return all(
-    `SELECT s.id, s.project_id projectId, s.title, s.state, s.last_at lastAt, s.entrypoint, s.cwd
-     FROM sessions s WHERE s.last_at >= ? AND s.state != 'ended' ORDER BY s.last_at DESC`,
+    `SELECT s.id, s.project_id projectId, s.title, s.state, s.last_at lastAt, s.entrypoint, s.cwd, r.role
+     FROM sessions s LEFT JOIN roles r ON r.session_id = s.id
+     WHERE s.last_at >= ? AND s.state != 'ended' ORDER BY s.last_at DESC`,
     sinceMs,
   )
 }

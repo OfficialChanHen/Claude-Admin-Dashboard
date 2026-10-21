@@ -1,5 +1,6 @@
 import indoorUrl from '../assets/kenney/indoor.png'
 import urbanUrl from '../assets/kenney/urban.png'
+import cityUrl from '../assets/kenney/city.png'
 import type { Camera } from './camera'
 import {
   ROOM_FACE, ROOM_WALL, TILE, WALL, outerRect, roomShell, rooms,
@@ -8,6 +9,7 @@ import {
 import { BRIEF_MS, REPORT_MS, type Emote, type Sprite, type Use, type WorldModel } from './model'
 import { TASKS, taskLabel, taskOf, type TaskKind, type Thing } from './tasks'
 import { iconCells, type IconName } from '../lib/pixelIcons'
+import { carsIn, groundAt, hash, propAt, walkersIn, ROAD, WALK, type CarDir, type Prop as StreetProp } from './street'
 
 // Draws the office from Kenney's Roguelike Indoors and RPG Urban packs (CC0).
 // The floor, walls and furniture are drawn once at art size and scaled up by
@@ -16,7 +18,8 @@ import { iconCells, type IconName } from '../lib/pixelIcons'
 // screens, thought clouds and speech bubbles. Labels only appear over people
 // you have clicked on.
 
-export type Sheets = Record<Sheet, CanvasImageSource>
+/** The office's sheets, plus the city sheet for the street outside. */
+export type Sheets = Record<Sheet, CanvasImageSource> & { city: CanvasImageSource }
 const GAP: Record<Sheet, number> = { indoor: 1, urban: 0 }
 
 let sheetsPromise: Promise<Sheets> | null = null
@@ -28,7 +31,11 @@ export function loadSheets() {
       img.onerror = reject
       img.src = src
     })
-  sheetsPromise ??= Promise.all([load(indoorUrl), load(urbanUrl)]).then(([indoor, urban]) => ({ indoor, urban: youngPeople(urban) }))
+  sheetsPromise ??= Promise.all([load(indoorUrl), load(urbanUrl), load(cityUrl)]).then(([indoor, urban, city]) => ({
+    indoor,
+    urban: youngPeople(urban),
+    city,
+  }))
   return sheetsPromise
 }
 
@@ -43,11 +50,38 @@ export function isGreyHair(r: number, g: number, b: number, a: number) {
   return a >= 128 && max >= 120 && max - Math.min(r, g, b) <= 28
 }
 
+// HQ's own ranks get people nobody else wears, made from the sheet's people
+// with new clothes and painted below them: managers in a green shirt, and the
+// boss in the dark suit with a gold tie. Colours are the sheet's exact pixels.
+const RANKS: { from: number; to: number; swap: Record<string, string> }[] = [
+  { from: 12, to: 18, swap: { '#898ca6': '#3e8a5c', '#aaa8bd': '#62b07c' } }, // manager
+  { from: 15, to: 21, swap: { '#ff7143': '#f2c14e' } }, // boss
+]
+export const MANAGER = 18
+export const BOSS = 21
+
+/** Swaps exact colours in RGBA pixels. */
+export function swapColors(d: Uint8ClampedArray, swap: Record<string, string>) {
+  const rgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))
+  const pairs = Object.entries(swap).map(([a, b]) => [rgb(a), rgb(b)] as const)
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] === 0) continue
+    for (const [a, b] of pairs) {
+      if (d[i] === a[0] && d[i + 1] === a[1] && d[i + 2] === a[2]) {
+        d[i] = b[0]
+        d[i + 1] = b[1]
+        d[i + 2] = b[2]
+        break
+      }
+    }
+  }
+}
+
 /** The staff are young: grey and white hair in the sheet is dyed a young colour, kept shaded. */
 function youngPeople(img: HTMLImageElement) {
   const cv = document.createElement('canvas')
   cv.width = img.width
-  cv.height = img.height
+  cv.height = Math.max(img.height, (Math.max(...RANKS.map((r) => r.to)) + 3) * TILE)
   const ctx = cv.getContext('2d', { willReadFrequently: true })!
   ctx.drawImage(img, 0, 0)
   const x0 = PEOPLE_COL * TILE
@@ -66,11 +100,17 @@ function youngPeople(img: HTMLImageElement) {
     }
   }
   ctx.putImageData(data, x0, 0)
+  for (const r of RANKS) {
+    const part = ctx.getImageData(x0, r.from * TILE, w, 3 * TILE)
+    swapColors(part.data, r.swap)
+    ctx.putImageData(part, x0, r.to * TILE)
+  }
   return cv
 }
 
 const TOKENS = [
   'panel', 'panel-2', 'line', 'line-strong', 'text', 'text-2', 'text-3', 'accent', 'accent-bg', 'accent-text', 'turn', 'turn-bg', 'bad',
+  'ok', 'ok-bg', 'warn', 'warn-bg',
   'w-night', 'w-shadow', 'w-void',
 ] as const
 export type Palette = Record<(typeof TOKENS)[number], string>
@@ -132,9 +172,18 @@ export const ART = {
 const CONFETTI = ['#d97757', '#7fdc8c', '#5ac8e6', '#f2c14e', '#e47d95']
 
 // People in the urban sheet: each is three rows (standing, two steps) of four
-// columns (left, down, up, right). Seniors wear shirts; juniors are casual.
-export const SENIORS = [12, 6, 15]
+// columns (left, down, up, right). Agents wear shirts; helpers are casual. The
+// suit is kept for the boss.
+export const SENIORS = [12, 6]
 export const JUNIORS = [0, 3]
+
+/** The first sheet row of the person someone is drawn as: one look per rank. */
+export function lookOf(s: Pick<Sprite, 'rank' | 'role' | 'seed'>) {
+  if (s.role === 'boss') return BOSS
+  if (s.role === 'manager') return MANAGER
+  const list = s.rank === 'senior' ? SENIORS : JUNIORS
+  return list[s.seed % list.length]
+}
 const RECEPTIONIST = 9
 const FACE_COL: Record<Facing, number> = { left: 23, down: 24, up: 25, right: 26 }
 
@@ -359,6 +408,172 @@ export function drawBackground(office: Office, pal: Palette, sheets: Sheets) {
   ctx.fillStyle = pal['w-night']
   ctx.fillRect(0, 0, cv.width, cv.height)
   return cv
+}
+
+
+/**
+ * Past the office's edges the floor and back wall carry on, lined up with the
+ * office's own tiles, so a window wider or taller than the office has no empty
+ * border around it.
+ */
+// The street outside, from the Roguelike Modern City sheet: art-pixel boxes in
+// its packed tilemap. Cars come in green, grey and orange, seen from each side.
+type CityBox = [number, number, number, number]
+const CITY = {
+  walk: [[16, 320, 16, 16], [32, 336, 16, 16]] as CityBox[], // plain slabs, and one with a crack
+  grass: [[0, 384, 16, 16], [16, 384, 16, 16]] as CityBox[],
+  asphalt: '#404040',
+  lane: '#e0b040',
+  zebra: '#d8d8d8',
+  kerb: '#7c8586',
+  carLeft: [[503, 264, 36, 24], [503, 328, 36, 24], [503, 392, 36, 24]] as CityBox[],
+  carRight: [[549, 264, 36, 24], [549, 328, 36, 24], [549, 392, 36, 24]] as CityBox[],
+  carUp: [[501, 290, 22, 29], [501, 354, 22, 29], [501, 418, 22, 29]] as CityBox[],
+  carDown: [[533, 290, 22, 29], [533, 354, 22, 29], [533, 418, 22, 29]] as CityBox[],
+  tree: [[498, 163, 12, 45], [514, 163, 12, 45], [530, 163, 12, 45], [547, 162, 10, 46], [563, 162, 10, 46], [579, 162, 10, 46]] as CityBox[],
+  bush: [[499, 212, 10, 12], [515, 212, 10, 12], [531, 212, 10, 12], [547, 209, 10, 15], [563, 209, 10, 15], [579, 209, 10, 15]] as CityBox[],
+  lamp: [116, 261, 11, 42] as CityBox,
+  bench: [272, 242, 32, 14] as CityBox,
+  bin: [196, 228, 8, 10] as CityBox,
+  hydrant: [244, 225, 8, 13] as CityBox,
+  planter: [[194, 291, 12, 13], [210, 291, 12, 13], [178, 289, 12, 15]] as CityBox[],
+}
+// Townsfolk out walking wear the office's own people, minus the ones on staff today.
+const WALKERS = [0, 3, 6, 9, 12, 15]
+const WALK_ROWS = [1, 0, 2, 0]
+
+function streetBox(p: StreetProp): CityBox {
+  switch (p.kind) {
+    case 'tree':
+      return CITY.tree[p.variant % CITY.tree.length]
+    case 'bush':
+      return CITY.bush[p.variant % CITY.bush.length]
+    case 'lamp':
+      return CITY.lamp
+    case 'bench':
+      return CITY.bench
+    case 'bin':
+      return CITY.bin
+    case 'hydrant':
+      return CITY.hydrant
+    case 'planter':
+      return CITY.planter[p.variant % CITY.planter.length]
+  }
+}
+
+function carBox(dir: CarDir, color: number): CityBox {
+  const set = dir === 'left' ? CITY.carLeft : dir === 'right' ? CITY.carRight : dir === 'up' ? CITY.carUp : CITY.carDown
+  return set[color % set.length]
+}
+
+/** Which tiles of a street, across its width, are road: `true` when tile t is in a road band. */
+function inRoad(t: number, n: number) {
+  const d = t < 0 ? -t - 1 : t >= n ? t - n : -1
+  return d >= WALK && d < WALK + ROAD
+}
+
+/**
+ * The city block around the office when you zoom out: sidewalks, roads with
+ * cars, people out walking, a park with trees and lamps that light up at night.
+ */
+function drawSurround(ctx: CanvasRenderingContext2D, cam: Camera, pal: Palette, sheets: Sheets, office: Office, now: number) {
+  const P = cam.P
+  const o = cam.origin()
+  const tl = cam.toWorld(0, 0)
+  const br = cam.toWorld(cam.vw, cam.vh)
+  if (tl.x >= 0 && tl.y >= 0 && br.x <= office.w && br.y <= office.h) return
+  const cols = Math.round(office.w / TILE)
+  const rows = Math.round(office.h / TILE)
+  const tx0 = Math.floor(tl.x / TILE) - 1
+  const ty0 = Math.floor(tl.y / TILE) - 1
+  const tx1 = Math.ceil(br.x / TILE) + 1
+  const ty1 = Math.ceil(br.y / TILE) + 4 // tall things below the screen reach up into it
+  const city = sheets.city
+  const put = (b: CityBox, wx: number, wy: number, flip = false) => {
+    const dx = o.x + Math.round(wx) * P
+    const dy = o.y + Math.round(wy) * P
+    if (!flip) return ctx.drawImage(city, b[0], b[1], b[2], b[3], dx, dy, b[2] * P, b[3] * P)
+    ctx.save()
+    ctx.translate(dx + b[2] * P, dy)
+    ctx.scale(-1, 1)
+    ctx.drawImage(city, b[0], b[1], b[2], b[3], 0, 0, b[2] * P, b[3] * P)
+    ctx.restore()
+  }
+  const fill = (wx: number, wy: number, w: number, h: number, c: string) => {
+    ctx.fillStyle = c
+    ctx.fillRect(o.x + Math.round(wx * P), o.y + Math.round(wy * P), Math.ceil(w * P), Math.ceil(h * P))
+  }
+  ctx.imageSmoothingEnabled = false
+
+  // The ground.
+  const things: { y: number; draw: () => void }[] = []
+  const lamps: StreetProp[] = []
+  for (let ty = ty0; ty <= ty1; ty++) {
+    for (let tx = tx0; tx <= tx1; tx++) {
+      const g = groundAt(tx, ty, cols, rows)
+      if (g === 'building') continue
+      const x = tx * TILE
+      const y = ty * TILE
+      if (g === 'road') {
+        fill(x, y, TILE, TILE, CITY.asphalt)
+        const alongX = inRoad(ty, rows) // part of a street running left to right
+        const alongY = inRoad(tx, cols)
+        // Zebra crossings where a street meets the sidewalk of the one crossing it.
+        const dx = tx < 0 ? -tx - 1 : tx - cols
+        const dy = ty < 0 ? -ty - 1 : ty - rows
+        if (alongX && !alongY && (dx === WALK - 1 || dx === WALK + ROAD)) for (let i = 2; i < TILE; i += 4) fill(x + i, y + 1, 2, TILE - 2, CITY.zebra)
+        if (alongY && !alongX && (dy === WALK - 1 || dy === WALK + ROAD)) for (let i = 2; i < TILE; i += 4) fill(x + 1, y + i, TILE - 2, 2, CITY.zebra)
+        // A dashed line down the middle, except where streets cross.
+        if (alongX && !alongY && (dy === WALK + ROAD / 2 - 1) && (tx & 1) === 0) fill(x + 4, ty < 0 ? y - 1 : y + TILE - 1, 8, 2, CITY.lane)
+        if (alongY && !alongX && (dx === WALK + ROAD / 2 - 1) && (ty & 1) === 0) fill(tx < 0 ? x - 1 : x + TILE - 1, y + 4, 2, 8, CITY.lane)
+        continue
+      }
+      if (g === 'walk') {
+        put(CITY.walk[hash(tx, ty, 7) < 0.08 ? 1 : 0], x, y)
+        // A kerb where the sidewalk meets the road.
+        if (groundAt(tx, ty - 1, cols, rows) === 'road') fill(x, y, TILE, 1, CITY.kerb)
+        if (groundAt(tx, ty + 1, cols, rows) === 'road') fill(x, y + TILE - 1, TILE, 1, CITY.kerb)
+        if (groundAt(tx - 1, ty, cols, rows) === 'road') fill(x, y, 1, TILE, CITY.kerb)
+        if (groundAt(tx + 1, ty, cols, rows) === 'road') fill(x + TILE - 1, y, 1, TILE, CITY.kerb)
+      } else put(CITY.grass[hash(tx, ty, 8) < 0.5 ? 0 : 1], x, y)
+      const p = propAt(tx, ty, cols, rows)
+      if (!p) continue
+      const b = streetBox(p)
+      if (p.kind === 'lamp') lamps.push(p)
+      things.push({ y: p.y, draw: () => put(b, p.x - b[2] / 2, p.y - b[3] + 1, p.flip) })
+    }
+  }
+
+  // Traffic and people, sorted with the props so nearer things stand in front.
+  const view = { x: tl.x - TILE, y: tl.y - TILE, w: br.x - tl.x + 2 * TILE, h: br.y - tl.y + 2 * TILE }
+  for (const c of carsIn(view, office.w, office.h, now)) {
+    const b = carBox(c.dir, c.color)
+    things.push({ y: c.y + b[3] / 2, draw: () => put(b, c.x - b[2] / 2, c.y - b[3] / 2) })
+  }
+  for (const w of walkersIn(view, office.w, office.h, now)) {
+    const base = WALKERS[w.look % WALKERS.length]
+    things.push({
+      y: w.y,
+      draw: () => blit(ctx, sheets, 'urban', FACE_COL[w.dir], base + WALK_ROWS[w.step], o.x + Math.round(w.x - TILE / 2) * P, o.y + Math.round(w.y - TILE + 1) * P, P),
+    })
+  }
+  things.sort((a, b) => a.y - b.y)
+  for (const t of things) t.draw()
+
+  ctx.fillStyle = pal['w-night']
+  ctx.fillRect(0, 0, cam.vw, cam.vh)
+  if (isNight(pal)) {
+    // Street lamps throw a warm pool of light at night.
+    for (const l of lamps) {
+      const c = cam.toScreen(l.x + (l.flip ? 3 : -3), l.y - 22)
+      const r = 30 * P
+      const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, r)
+      g.addColorStop(0, 'rgba(255, 214, 130, 0.35)')
+      g.addColorStop(1, 'rgba(255, 214, 130, 0)')
+      ctx.fillStyle = g
+      ctx.fillRect(c.x - r, c.y - r, r * 2, r * 2)
+    }
+  }
 }
 
 export function wrap(ctx: Pick<CanvasRenderingContext2D, 'measureText'>, text: string, maxW: number, maxLines: number) {
@@ -651,8 +866,7 @@ export function drawFrame(
   const night = isNight(pal)
   const date = new Date(now)
   ctx.imageSmoothingEnabled = false
-  ctx.fillStyle = pal['w-void']
-  ctx.fillRect(0, 0, cam.vw, cam.vh)
+  drawSurround(ctx, cam, pal, sheets, office, now)
   ctx.drawImage(bg, o.x, o.y, bg.width * P, bg.height * P)
 
   const rect: Fill = (x, y, w, h, c) => {
@@ -900,8 +1114,7 @@ export function drawFrame(
     const e = s.emote
     if (e?.kind === 'done' && now - e.since < 500) dy -= Math.round(Math.sin(((now - e.since) / 500) * Math.PI) * 3) // a little hop
     if (e?.kind === 'error' && now - e.since < 450) dx += Math.floor(now / 60) % 2 ? 1 : -1 // a shake
-    const list = s.rank === 'senior' ? SENIORS : JUNIORS
-    const base = list[s.seed % list.length]
+    const base = lookOf(s)
     const ax = Math.round(s.x - TILE / 2) + dx
     const ay = Math.round(s.y - TILE) + dy + (seated ? 2 : 0)
     const bx = o.x + ax * P
@@ -1055,6 +1268,22 @@ function drawThought(ctx: CanvasRenderingContext2D, cx: number, top: number, q: 
   }
 }
 
+export type RoleTone = 'boss' | 'manager' | 'agent' | 'helper'
+
+/** What the tag under someone's feet says. */
+export function roleTag(s: Pick<Sprite, 'rank' | 'role'>): { text: string; tone: RoleTone } {
+  if (s.role === 'boss') return { text: 'Boss', tone: 'boss' }
+  if (s.role === 'manager') return { text: 'Manager', tone: 'manager' }
+  return s.rank === 'junior' ? { text: 'Helper', tone: 'helper' } : { text: 'Agent', tone: 'agent' }
+}
+
+const TAG_TONE: Record<RoleTone, { bg: keyof Palette; line: keyof Palette; text: keyof Palette }> = {
+  boss: { bg: 'warn-bg', line: 'warn', text: 'warn' },
+  manager: { bg: 'ok-bg', line: 'ok', text: 'ok' },
+  agent: { bg: 'accent-bg', line: 'accent', text: 'accent-text' },
+  helper: { bg: 'panel', line: 'line-strong', text: 'text-2' },
+}
+
 function drawOverlay(
   ctx: CanvasRenderingContext2D, cam: Camera, dpr: number, pal: Palette, model: WorldModel,
   s: Sprite, u: Use | undefined, cx: number, top: number, feet: number, now: number, selected: boolean, asks: Frame['asks'],
@@ -1085,7 +1314,24 @@ function drawOverlay(
     ctx.textBaseline = 'top'
     return h
   }
-  if (chip && below) drawChip(chip, feet + px(3))
+  // Their role, under their feet: the boss, a manager, an agent (a session) or a helper (a subagent).
+  let underFeet = feet + px(3)
+  if (cam.P >= 2 * dpr) {
+    const tag = roleTag(s)
+    const tone = TAG_TONE[tag.tone]
+    ctx.font = font(9, 700)
+    const tw = Math.ceil(ctx.measureText(tag.text).width)
+    const w = tw + px(8)
+    const h = px(13)
+    const x = Math.round(cx - w / 2)
+    box(ctx, x, underFeet, w, h, pal[tone.bg], pal[tone.line], Math.max(1, px(1)), px(2))
+    ctx.fillStyle = pal[tone.text]
+    ctx.textBaseline = 'middle'
+    ctx.fillText(tag.text, x + px(4), underFeet + h / 2)
+    ctx.textBaseline = 'top'
+    underFeet += h + px(2)
+  }
+  if (chip && below) drawChip(chip, underFeet)
 
   // More helpers than desks: a small count beside the senior you clicked on.
   const extra = selected && s.rank === 'senior' ? model.hiddenCount(s.sessionId) : 0

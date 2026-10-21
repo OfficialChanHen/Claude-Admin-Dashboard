@@ -13,19 +13,23 @@ import { SessionDrawer } from './components/SessionDrawer'
 import { ChatPanel } from './components/ChatPanel'
 import { AskPopup } from './components/ApprovalCards'
 import { World, type DoorDrop, type WorldControl } from './components/World'
-import { PromptBar, type SendOptions } from './components/PromptBar'
+import { PromptBar, type PromptTarget, type SendOptions } from './components/PromptBar'
 import { OTHER, WorldModel } from './world/model'
 import { HUB } from './world/office'
 import { PixelIcon } from './components/PixelIcon'
 import { KeyPanel } from './components/KeyPanel'
 import { ClipboardPanel } from './components/ClipboardPanel'
+import { ReportsPanel } from './components/ReportsPanel'
+import { ApprovalsList, askerName } from './components/ApprovalsList'
+import { NeedsOk } from './components/NeedsOk'
+import { askNotifyPermission, blip, isNewApproval, loadMuted, notifyApproval, pendingTitle, saveMuted } from './lib/alerts'
 import type { Hit } from './world/render'
 
 const MAX_FEED = 300
 
 type Win =
   | { kind: 'projects' } | { kind: 'usage'; projectId: string | null } | { kind: 'limits' } | { kind: 'log' } | { kind: 'project'; projectId: string }
-  | { kind: 'key' } | { kind: 'clipboard'; projectId: string }
+  | { kind: 'key' } | { kind: 'clipboard'; projectId: string } | { kind: 'reports' }
 
 // Steps that change what is on a clipboard: a to-do list, or a helper sent off.
 const PLAN_TOOLS = new Set(['TodoWrite', 'Agent', 'Task'])
@@ -96,6 +100,8 @@ export function App() {
   const [leaving, setLeaving] = useState<Leaving | null>(null)
   const [usageTick, setUsageTick] = useState(0)
   const [budgetTick, setBudgetTick] = useState(0)
+  const [reportTick, setReportTick] = useState(0)
+  const [reportCount, setReportCount] = useState(0)
   const [clipTick, setClipTick] = useState(0)
   const [backfill, setBackfill] = useState<{ done: number; total: number } | null>(null)
   const reqOutput = useRef(new Map<string, number>())
@@ -127,10 +133,18 @@ export function App() {
   }, [])
   // The person whose "?" you clicked: their card sits over their head.
   const [asking, setAsking] = useState<{ sessionId: string; label: string } | null>(null)
+  // The list under the "Needs your OK" plate.
+  const [askList, setAskList] = useState(false)
 
   useEffect(() => {
     world.current!.sync(active)
   }, [active])
+
+  // How much work waits for spare usage, for the plate in the corner.
+  const [waiting, setWaiting] = useState({ queued: 0, paused: 0 })
+  useEffect(() => {
+    api.budget().then((b) => setWaiting({ queued: b.queue.length, paused: b.paused.length })).catch(() => {})
+  }, [budgetTick])
 
   const loadProjects = useCallback(() => api.projects().then(setProjects).catch(() => {}), [])
   const loadActive = useCallback(() => api.active().then(setActive).catch(() => {}), [])
@@ -172,6 +186,10 @@ export function App() {
     }, 800)
   }
 
+  // Requests seen so far; only ones that arrive live after this count as new.
+  const knownApprovals = useRef(new Set<string>())
+  const alertApproval = useRef<(a: Approval) => void>(() => {})
+
   const onEvent = useCallback((ev: LiveEvent) => {
     const push = (item: FeedItem) => {
       if (seen.current.has(item.key)) return
@@ -186,16 +204,27 @@ export function App() {
       case 'budget':
         setBudgetTick((n) => n + 1)
         break
+      case 'report':
+        setReportCount((n) => n + 1)
+        setReportTick((n) => n + 1)
+        break
+      case 'hierarchy':
+        setReportTick((n) => n + 1)
+        break
       case 'clipboard':
         bumpClip()
         break
       case 'hello':
+        knownApprovals.current = new Set((ev.approvals ?? []).map((a) => a.id))
         setApprovals(ev.approvals ?? [])
         break
       case 'approval':
+        if (isNewApproval(knownApprovals.current, ev.approval)) alertApproval.current(ev.approval)
+        knownApprovals.current.add(ev.approval.id)
         setApprovals((list) => [...list.filter((a) => a.id !== ev.approval.id), ev.approval])
         break
       case 'approval_done':
+        knownApprovals.current.delete(ev.id)
         setApprovals((list) => list.filter((a) => a.id !== ev.id))
         break
       case 'session':
@@ -257,11 +286,15 @@ export function App() {
   const meter = useMemo(() => ({ fiveHour: limits?.fiveHour?.pct ?? null, week: limits?.sevenDay?.pct ?? null }), [limits])
 
   /** Walks into a room. A project's room is also where the prompt bar sends to. */
+  const activeRef = useRef(active)
+  activeRef.current = active
   const enterRoom = useCallback((id: string | null) => {
     setRoom(id)
     if (id && id !== HUB && id !== OTHER) {
       setFocus(id)
       setPromptFocus((n) => n + 1)
+      // Someone from another project stops being the one you talk to.
+      setSelected((sel) => (sel && activeRef.current.find((s) => s.id === sel)?.projectId !== id ? null : sel))
     }
   }, [])
 
@@ -280,7 +313,9 @@ export function App() {
   const onHit = useCallback((h: Hit) => {
     switch (h.kind) {
       case 'sprite':
+        // Their conversation opens, and the prompt box talks to them.
         setSelected(h.sessionId)
+        setPromptFocus((n) => n + 1)
         break
       case 'ask':
         setAsking({ sessionId: h.sessionId, label: h.label })
@@ -317,6 +352,29 @@ export function App() {
   const closeSession = useCallback(() => setOpenSession(null), [])
   const closeChat = useCallback(() => setSelected(null), [])
   const closeAsk = useCallback(() => setAsking(null), [])
+  const closeAskList = useCallback(() => setAskList(false), [])
+  const labelOf = useCallback((sid: string) => world.current!.sprites.get(sid)?.label, [])
+
+  // A new request rings and shows a notification; clicking it opens that request's card.
+  const [muted, setMuted] = useState(loadMuted)
+  const muteSound = useCallback((m: boolean) => {
+    setMuted(m)
+    saveMuted(m)
+  }, [])
+  alertApproval.current = (a) => {
+    const name = askerName(a, activeRef.current, labelOf(a.sessionId))
+    if (!muted) blip()
+    notifyApproval(a, name, () => setAsking({ sessionId: a.sessionId, label: name }))
+  }
+  useEffect(() => {
+    document.title = pendingTitle(approvals.length)
+  }, [approvals.length])
+  // Browsers only let a click ask for notifications, so the first click anywhere does.
+  useEffect(() => {
+    window.addEventListener('pointerdown', askNotifyPermission, { once: true })
+    return () => window.removeEventListener('pointerdown', askNotifyPermission)
+  }, [])
+
   const askingId = asking?.sessionId
   const askHead = useCallback(() => (askingId ? control.current?.headOf(askingId) ?? null : null), [askingId])
 
@@ -373,6 +431,13 @@ export function App() {
         <BudgetPanel projects={projectMap} refreshKey={budgetTick} />
       </div>
     )
+  } else if (win?.kind === 'reports') {
+    windowTitle = 'Reports'
+    windowBody = (
+      <div className="panel-body">
+        <ReportsPanel projects={projectMap} refreshKey={reportTick} onOpen={(sid) => { setSelected(sid); setWin(null) }} />
+      </div>
+    )
   } else if (win?.kind === 'log') {
     windowTitle = 'Archive'
     windowBody = (
@@ -415,21 +480,28 @@ export function App() {
   const services: { label: string; open: () => void }[] = [
     { label: 'Reception: projects', open: () => setWin({ kind: 'projects' }) },
     { label: 'Accounts: usage', open: () => setWin({ kind: 'usage', projectId: null }) },
-    { label: 'Plan meter', open: () => setWin({ kind: 'limits' }) },
+    { label: 'Plan meter: limits and the spare usage queue', open: () => setWin({ kind: 'limits' }) },
     { label: 'Archive: action log', open: () => setWin({ kind: 'log' }) },
     { label: 'Notice board: key and lighting', open: () => setWin({ kind: 'key' }) },
+    { label: 'Reports from the boss and managers', open: () => setWin({ kind: 'reports' }) },
     ...(clipFor ? [{ label: `Clipboard: ${projectMap.get(clipFor)?.name ?? 'Other folders'} to-do list and plans`, open: () => setWin({ kind: 'clipboard', projectId: clipFor }) }] : []),
   ]
   const people = active.filter((s) => s.state !== 'ended' && visible(s.projectId))
 
-  const send = async (text: string, opts: SendOptions) => {
-    if (!focus) return
-    await api.prompt({ projectId: focus, text, ...opts })
-  }
-
   const chatSession = selected ? active.find((s) => s.id === selected) : undefined
   const chatTitle = chatSession?.title ?? world.current!.sprites.get(selected ?? '')?.label ?? 'Session'
   const chatProject = chatSession?.projectId ? projectMap.get(chatSession.projectId) ?? null : null
+  // With someone's conversation open, prompts go to them; otherwise to the project you picked.
+  const promptTarget: PromptTarget | null = selected
+    ? { sessionId: selected, name: chatTitle, busy: chatSession?.state === 'working' || chatSession?.state === 'waiting' }
+    : null
+  const promptProject = selected ? chatProject : focus ? projectMap.get(focus) ?? null : null
+
+  const send = async (text: string, opts: SendOptions) => {
+    if (selected) return void (await api.prompt({ projectId: chatSession?.projectId ?? '', sessionId: selected, text, ...opts }))
+    if (!focus) return
+    await api.prompt({ projectId: focus, text, ...opts })
+  }
 
   return (
     <div className="game">
@@ -467,25 +539,81 @@ export function App() {
         <button onClick={flipLights}>Flip the lights</button>
       </nav>
 
-      {focus && (
+      <div className="hud-right">
+        {(waiting.queued > 0 || waiting.paused > 0) && (
+          <button className="queue-plate hud-plate" onClick={() => setWin({ kind: 'limits' })}>
+            <PixelIcon name="queue" size={12} />
+            {[waiting.queued && `${waiting.queued} queued`, waiting.paused && `${waiting.paused} paused`].filter(Boolean).join(', ')}
+          </button>
+        )}
+        <button
+          className="queue-plate hud-plate"
+          onClick={() => {
+            setWin({ kind: 'reports' })
+            setReportCount(0)
+          }}
+        >
+          <PixelIcon name="board" size={12} />
+          Reports{reportCount > 0 ? ` (${reportCount} new)` : ''}
+        </button>
+        {approvals.length > 0 && (
+          <NeedsOk approvals={approvals} open={askList} muted={muted} onToggle={() => setAskList((v) => !v)} onMute={muteSound} />
+        )}
+        {askList && (
+          <Keep name="Waiting for your OK">
+            <ApprovalsList
+              approvals={approvals}
+              active={active}
+              projects={projectMap}
+              labelOf={labelOf}
+              onPick={(a, name) => {
+                setAsking({ sessionId: a.sessionId, label: name })
+                setAskList(false)
+              }}
+              onClose={closeAskList}
+            />
+          </Keep>
+        )}
+      </div>
+
+      {focus && !selected && (
         <Keep name="The prompt box">
-          <PromptBar project={projectMap.get(focus) ?? null} focusKey={promptFocus} onSend={send} onClear={() => setFocus(null)} />
+          <PromptBar
+            project={promptProject}
+            target={promptTarget}
+            focusKey={promptFocus}
+            onSend={send}
+            onClear={() => setFocus(null)}
+          />
         </Keep>
       )}
 
       {selected && (
-        <Keep name="The conversation">
-          <ChatPanel
-            sessionId={selected}
-            title={chatTitle}
-            project={chatProject}
-            feed={feed}
-            model={world.current!}
-            onDetails={() => setOpenSession(selected)}
-            onSendHome={() => setLeaving({ key: selected, sessionId: selected, label: chatTitle, x: null, y: null, busy: false, error: '' })}
-            onClose={closeChat}
-          />
-        </Keep>
+        // The prompt box writes to this session, so it sits under the conversation
+        // in one column instead of floating where the two could overlap.
+        <div className="chat-dock">
+          <Keep name="The conversation">
+            <ChatPanel
+              sessionId={selected}
+              title={chatTitle}
+              project={chatProject}
+              feed={feed}
+              model={world.current!}
+              onDetails={() => setOpenSession(selected)}
+              onSendHome={() => setLeaving({ key: selected, sessionId: selected, label: chatTitle, x: null, y: null, busy: false, error: '' })}
+              onClose={closeChat}
+            />
+          </Keep>
+          <Keep name="The prompt box">
+            <PromptBar
+              project={promptProject}
+              target={promptTarget}
+              focusKey={promptFocus}
+              onSend={send}
+              onClear={() => setSelected(null)}
+            />
+          </Keep>
+        </div>
       )}
 
       {asking && (

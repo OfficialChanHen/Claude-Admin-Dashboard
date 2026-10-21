@@ -41,6 +41,8 @@ export type LiveEvent =
   | { kind: 'projects' }
   | { kind: 'budget' }
   | { kind: 'clipboard'; projectId: string }
+  | { kind: 'report'; report: Report }
+  | { kind: 'hierarchy' }
   | { kind: 'approval'; approval: Approval }
   | { kind: 'approval_done'; id: string; decision: 'allow' | 'deny' | null }
   | { kind: 'hello'; recent: LiveEvent[]; limits: Limits | null; approvals?: Approval[] }
@@ -77,7 +79,18 @@ export type Budget = {
   queue: { id: string; projectId: string; text: string; permissionMode: string; addedAt: number }[]
 }
 
-export type ActiveSession = { id: string; projectId: string | null; title: string | null; state: SessionState; lastAt: number; entrypoint: string | null; cwd: string | null }
+/** HQ's own managers (one per busy project) and the boss over them. */
+export type Role = 'manager' | 'boss'
+export type ActiveSession = { id: string; projectId: string | null; title: string | null; state: SessionState; lastAt: number; entrypoint: string | null; cwd: string | null; role?: Role | null }
+
+/** What a manager or the boss summed up at the end of a round. */
+export type Report = { id: string; sessionId: string; role: Role; projectId: string | null; ts: number; text: string }
+export type Hierarchy = {
+  on: boolean
+  everyMin: number
+  roles: { sessionId: string; role: Role; projectId: string | null; lastRound: number | null; running: boolean }[]
+  reports: Report[]
+}
 
 type Agg = Tokens & { cost: number; calls: number }
 export type ActionUsage = {
@@ -129,11 +142,14 @@ export const api = {
   session: (id: string) => req<SessionDetail>(`/api/sessions/${id}`),
   active: () => req<ActiveSession[]>('/api/active'),
   limits: () => req<Limits | null>('/api/limits'),
-  prompt: (body: { projectId: string; text: string; mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan'; when?: 'now' | 'spare' }) =>
+  prompt: (body: { projectId: string; sessionId?: string; text: string; mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan'; when?: 'now' | 'spare' }) =>
     req<{ ok: true; resumed?: string | null; queued?: string }>('/api/prompt', { method: 'POST', body: JSON.stringify(body) }),
   budget: () => req<Budget>('/api/budget'),
+  hierarchy: () => req<Hierarchy>('/api/hierarchy'),
   unqueue: (id: string) => req<{ ok: true }>(`/api/budget/queue/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  dropPaused: (id: string) => req<{ ok: true }>(`/api/budget/paused/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  runQueued: (id?: string) =>
+    req<{ ok: true; started: string[]; dropped?: number }>(id ? `/api/budget/queue/${encodeURIComponent(id)}/run` : '/api/budget/queue/run', { method: 'POST' }),
+  dropPaused:(id: string) => req<{ ok: true }>(`/api/budget/paused/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   answer: (id: string, decision: 'allow' | 'deny' | 'terminal') =>
     req<{ ok: true }>(`/api/approvals/${id}`, { method: 'POST', body: JSON.stringify({ decision }) }),
   status: () => req<{ ready: boolean; progress: { done: number; total: number } }>('/api/status'),

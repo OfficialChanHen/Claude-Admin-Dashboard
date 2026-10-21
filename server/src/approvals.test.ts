@@ -50,6 +50,15 @@ describe('Approvals', () => {
     expect(events.at(-1)).toMatchObject({ kind: 'approval_done', decision: null })
   })
 
+  it('can hold one request for less time, as sessions HQ started need', async () => {
+    vi.useFakeTimers()
+    const { a } = setup(120_000)
+    const r = a.ask(req, Date.now(), 50_000)
+    expect(a.list()[0].expiresAt - a.list()[0].ts).toBe(50_000)
+    vi.advanceTimersByTime(50_000)
+    expect(await r.decision).toBeNull()
+  })
+
   it('lets go of a session that moved on', async () => {
     const { a } = setup()
     const r1 = a.ask(req)

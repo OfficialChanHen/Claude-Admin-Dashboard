@@ -37,11 +37,6 @@ const withStatus = process.argv.includes('--statusline')
 const raw = fs.existsSync(settingsPath) ? fs.readFileSync(settingsPath, 'utf8') : '{}'
 const settings = JSON.parse(raw)
 
-const backupDir = path.join(root, 'data', 'backups')
-fs.mkdirSync(backupDir, { recursive: true })
-const backup = path.join(backupDir, `settings.${Date.now()}.json`)
-fs.writeFileSync(backup, raw)
-
 const hooks = settings.hooks ?? {}
 for (const ev of Object.keys(hooks)) {
   hooks[ev] = hooks[ev]
@@ -71,6 +66,17 @@ if (!uninstall && withStatus) {
   }
 }
 
-fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n')
+// npm run dev and npm start run this every time, so an unchanged file is left
+// alone and no backup piles up.
+const next = JSON.stringify(settings, null, 2) + '\n'
+if (fs.existsSync(settingsPath) && JSON.stringify(JSON.parse(raw)) === JSON.stringify(settings)) {
+  console.log(`HQ hooks are ${uninstall ? 'not installed' : 'up to date'} in ${settingsPath}`)
+  process.exit(0)
+}
+const backupDir = path.join(root, 'data', 'backups')
+fs.mkdirSync(backupDir, { recursive: true })
+const backup = path.join(backupDir, `settings.${Date.now()}.json`)
+fs.writeFileSync(backup, raw)
+fs.writeFileSync(settingsPath, next)
 console.log(`${uninstall ? 'Removed' : 'Installed'} HQ hooks in ${settingsPath}`)
 console.log(`Backup of the old file: ${backup}`)

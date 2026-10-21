@@ -7,8 +7,10 @@
     "web"
   ],
   "scripts": {
+    "predev": "node scripts/install-hooks.mjs",
     "dev": "concurrently -k -n server,web -c green,blue \"npm:dev -w server\" \"npm:dev -w web\"",
     "build": "npm run build -w web",
+    "prestart": "node scripts/install-hooks.mjs",
     "start": "npm run start -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
     "hooks:install": "node scripts/install-hooks.mjs",

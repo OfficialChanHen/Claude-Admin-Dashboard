@@ -5,6 +5,7 @@ import { clock } from '../lib/format'
 import { toolIcon } from '../lib/pixelIcons'
 import type { WorldModel } from '../world/model'
 import { taskLabel } from '../world/tasks'
+import { Markdown } from './Markdown'
 import { PixelIcon } from './PixelIcon'
 import type { FeedItem } from './LiveFeed'
 
@@ -146,7 +147,11 @@ export function ChatPanel({
             return (
               <li key={b.key} className={`chat-msg ${b.kind}`}>
                 <div className="chat-meta">{b.kind === 'you' ? 'You' : 'Claude'} <span>{clock(b.ts)}</span></div>
-                <div className="chat-text">{b.text}</div>
+                {b.kind === 'you' ? (
+                  <div className="chat-text">{b.text}</div>
+                ) : (
+                  <div className="chat-text md"><Markdown text={b.text} /></div>
+                )}
               </li>
             )
           })}

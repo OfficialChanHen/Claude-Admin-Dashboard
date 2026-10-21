@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Camera } from './camera'
 import { buildOffice, TILE } from './office'
 import { WorldModel, type Sprite } from './model'
-import { ART, doorAt, hitFloor, hitRect, hitTest, isGreyHair, lampFor, podCenter, podStatus, sameHit, skyAt, statusText, wrap, type Frame } from './render'
+import { ART, doorAt, hitFloor, hitRect, hitTest, isGreyHair, lampFor, lookOf, roleTag, swapColors, BOSS, MANAGER, SENIORS, JUNIORS, podCenter, podStatus, sameHit, skyAt, statusText, wrap, type Frame } from './render'
 
 const office = buildOffice([
   { id: 'a', name: 'Alpha' },
@@ -234,5 +234,34 @@ describe('doorAt', () => {
   it('is not a door in the middle of a room', () => {
     expect(doorAt(office, podCenter(alpha).x, podCenter(alpha).y)).toBe(false)
     expect(doorAt(office, alpha.seniorSeats[0].x, alpha.seniorSeats[0].y)).toBe(false)
+  })
+})
+
+describe('roleTag', () => {
+  it('names the boss, managers, agents and helpers', () => {
+    expect(roleTag({ rank: 'senior', role: 'boss' })).toEqual({ text: 'Boss', tone: 'boss' })
+    expect(roleTag({ rank: 'senior', role: 'manager' })).toEqual({ text: 'Manager', tone: 'manager' })
+    expect(roleTag({ rank: 'senior', role: null })).toEqual({ text: 'Agent', tone: 'agent' })
+    expect(roleTag({ rank: 'junior' })).toEqual({ text: 'Helper', tone: 'helper' })
+  })
+})
+
+describe('lookOf', () => {
+  it('gives each rank its own people', () => {
+    expect(lookOf({ rank: 'senior', role: 'boss', seed: 4 })).toBe(BOSS)
+    expect(lookOf({ rank: 'senior', role: 'manager', seed: 4 })).toBe(MANAGER)
+    const agents = new Set([0, 1, 2, 3].map((seed) => lookOf({ rank: 'senior', role: null, seed })))
+    const helpers = new Set([0, 1, 2, 3].map((seed) => lookOf({ rank: 'junior', seed })))
+    expect([...agents].sort()).toEqual([...SENIORS].sort())
+    expect([...helpers].sort()).toEqual([...JUNIORS].sort())
+    for (const a of agents) expect([BOSS, MANAGER, ...JUNIORS]).not.toContain(a)
+  })
+})
+
+describe('swapColors', () => {
+  it('changes only the exact colours asked for', () => {
+    const d = new Uint8ClampedArray([0xff, 0x71, 0x43, 255, 0xff, 0x71, 0x44, 255, 0xff, 0x71, 0x43, 0])
+    swapColors(d, { '#ff7143': '#f2c14e' })
+    expect([...d]).toEqual([0xf2, 0xc1, 0x4e, 255, 0xff, 0x71, 0x44, 255, 0xff, 0x71, 0x43, 0])
   })
 })

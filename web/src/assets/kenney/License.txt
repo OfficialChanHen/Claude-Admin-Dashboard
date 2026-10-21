@@ -4,3 +4,4 @@ Free to use in personal, educational and commercial projects. Credit is not requ
 
 indoor.png  Roguelike Indoors pack, tilesheet with a 1 px gap between 16 px tiles
 urban.png   RPG Urban pack, packed tilemap (16 px tiles, no gap)
+city.png    Roguelike Modern City pack, packed tilemap (16 px tiles, no gap)

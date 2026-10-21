@@ -167,6 +167,27 @@ CREATE TABLE IF NOT EXISTS queue (
   added_at        INTEGER NOT NULL,
   started_at      INTEGER
 );
+
+-- HQ's own managers (one per busy project) and the boss over them. Each is
+-- one session that HQ resumes for every round.
+CREATE TABLE IF NOT EXISTS roles (
+  session_id  TEXT PRIMARY KEY,
+  role        TEXT NOT NULL,
+  project_id  TEXT,
+  started_at  INTEGER NOT NULL,
+  last_round  INTEGER
+);
+
+-- What a manager or the boss reported at the end of a round.
+CREATE TABLE IF NOT EXISTS reports (
+  id          TEXT PRIMARY KEY,
+  session_id  TEXT NOT NULL,
+  role        TEXT NOT NULL,
+  project_id  TEXT,
+  ts          INTEGER NOT NULL,
+  text        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS reports_ts ON reports(ts);
 `)
 
 export type Row = Record<string, unknown>
