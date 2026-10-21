@@ -23,13 +23,15 @@ open when you click one.
 - **A person**: click to read the conversation (your prompts, the replies and
   the steps in between, live) and to see what they are doing. A thought cloud
   over someone means they are thinking.
-- **Drag a person to a door** (the entrance in the back wall, or any doorway)
+- **Drag a person to a door** (the front door, or any doorway)
   to send them home. That stops the session after you confirm; the
   conversation is kept. Dropping them anywhere else sends them back to work.
 - **In the hub**: Reception (projects), Accounts (usage), the Archive (every
   action), and on the wall the notice board (what everything means), the clock
-  and the plan meter (5 hour and weekly limits). The light switch by the
-  entrance flips day and night, and the lamp over it shows whether HQ is live.
+  and the plan meter (5 hour and weekly limits). Daylight follows your
+  clock. The light switch on the back wall flips the panels between light and
+  dark, and the lamp by the front door shows whether
+  HQ is live. People come in and leave through the front door, off the street.
 - Drag or use the arrow keys to move around; scroll or press + and - to zoom.
   Escape, scrolling out or clicking outside a room steps back out. Tab to the
   canvas's list of places if you prefer the keyboard.
@@ -41,6 +43,11 @@ fresh session; "Continue last" resumes the project's latest session that is not
 busy. "Can edit" lets it edit files without asking; "Plan only" makes it plan
 and change nothing. There is no option to skip permissions. Startup errors go to
 `data/prompts.log`.
+
+Claude Code doesn't title sessions started this way, so HQ names each one after
+its first prompt ("Fix the login redirect"), and the office, the panels and the
+managers' reports use that name instead of a session id. A helper is called by
+the task it was handed. Reports put anything that needs you at the top.
 
 A session started here has no terminal, so any other step that needs your OK
 (a shell command, a web fetch) is asked in HQ, with Allow and Deny. HQ passes `--permission-prompt-tool` and a small

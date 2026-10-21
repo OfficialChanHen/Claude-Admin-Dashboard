@@ -18,6 +18,8 @@ import { SESSION_ID, stopSession } from './stop.js'
 import { sessionChat } from './chat.js'
 import { hierarchyState, startHierarchy, toolsFor } from './hierarchy.js'
 import { adviseHook, budgetState, dropPaused, queuePrompt, runQueued, startBudget, unqueue } from './budget.js'
+import { gitState, startGit } from './git.js'
+import { previewFile, previewState, startPreviews } from './previews.js'
 
 /** The claude process a hook came from, sent by the hook command as a header. */
 function claudePid(headers: Record<string, unknown>) {
@@ -102,6 +104,14 @@ app.post<{ Params: { id: string } }>('/api/sessions/:id/stop', async (req, reply
   return 'error' in r ? reply.code(409).send(r) : r
 })
 app.get('/api/limits', async () => getLimits())
+// Each project's git state and dev server, for the whiteboards and TVs in its room.
+app.get('/api/git', async () => gitState())
+app.get('/api/previews', async () => previewState())
+app.get<{ Params: { id: string; which: string } }>('/api/previews/:id/:which', async (req, reply) => {
+  const f = previewFile(req.params.id, req.params.which)
+  if (!f) return reply.code(404).send({ error: 'No picture yet.' })
+  return reply.type('image/png').header('cache-control', 'no-cache').send(fs.createReadStream(f))
+})
 app.get('/api/active', async () => activeSessions(Date.now() - ACTIVE_WINDOW_MS))
 
 // Send a prompt to a project: starts the claude CLI there.
@@ -337,3 +347,5 @@ console.log(`Read ${progress.total} session logs in ${((Date.now() - t0) / 1000)
 // Spare usage waits until session states are read, so it never starts over a busy session.
 startBudget()
 startHierarchy()
+startGit()
+startPreviews()

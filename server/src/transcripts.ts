@@ -2,10 +2,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { watch } from 'chokidar'
 import { TRANSCRIPTS_DIR } from './config.js'
-import { get, run, tx } from './db.js'
+import { all, get, run, tx } from './db.js'
 import { bus, type LiveEvent, type SessionState } from './bus.js'
 import { projectForCwd } from './projects.js'
 import { saveTodos } from './clipboard.js'
+import { taskTitle } from './names.js'
 
 // Reads Claude Code's own session logs in ~/.claude/projects. Nothing here calls
 // the API, so the visual layer costs no tokens.
@@ -285,7 +286,33 @@ function addPrompt(ctx: Ctx, e: Entry, s: SessionRow, text: string, ts: number) 
   run('UPDATE sessions SET current_prompt = ? WHERE id = ?', e.uuid, s.id)
   s.current_prompt = e.uuid
   emit(ctx, { kind: 'prompt', sessionId: s.id, projectId: s.project_id, agentId: null, text: text.slice(0, 500), ts })
+  nameAfterPrompt(ctx, s, text, ts)
   if (ctx.live) setSessionState(s.id, 'working')
+}
+
+/**
+ * Sessions HQ starts with `claude -p` never get a title from Claude Code, so
+ * they are named after their first prompt. A title Claude Code writes later
+ * replaces it.
+ */
+function nameAfterPrompt(ctx: Ctx, s: SessionRow, text: string, ts: number) {
+  const title = taskTitle(text)
+  if (!title || !run('UPDATE sessions SET title = ? WHERE id = ? AND title IS NULL', title, s.id).changes) return
+  emit(ctx, { kind: 'session', sessionId: s.id, projectId: s.project_id, state: s.state as SessionState, title, ts })
+}
+
+/** Names the untitled sessions already read, from their first prompt. */
+function nameUntitled() {
+  const rows = all<{ id: string; text: string }>(
+    `SELECT s.id, (SELECT p.text FROM prompts p WHERE p.session_id = s.id ORDER BY p.ts LIMIT 1) text
+     FROM sessions s WHERE s.title IS NULL`,
+  )
+  tx(() => {
+    for (const r of rows) {
+      const title = r.text ? taskTitle(r.text) : null
+      if (title) run('UPDATE sessions SET title = ? WHERE id = ? AND title IS NULL', title, r.id)
+    }
+  })
 }
 
 function registerAgent(ctx: Ctx, file: string) {
@@ -448,6 +475,7 @@ export async function startTranscripts(onProgress?: (done: number, total: number
     onProgress?.(++done, files.length)
   }
   linkAgentPrompts()
+  nameUntitled()
   ready = true
 
   const pending = new Map<string, NodeJS.Timeout>()

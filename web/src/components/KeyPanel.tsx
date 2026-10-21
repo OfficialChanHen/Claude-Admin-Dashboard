@@ -20,7 +20,7 @@ const SIGNS: { icon: IconName | '!' | '+2'; tone?: 'turn' | 'bad'; text: string 
   { icon: 'check', text: 'Finished a turn (with confetti), or a helper handing back its report' },
   { icon: 'bang', tone: 'bad', text: 'A step failed' },
   { icon: 'question', text: 'Asking you a question' },
-  { icon: 'cup', text: 'On a break between tasks' },
+  { icon: 'cup', text: 'On a break between tasks: coffee, a snack, the sofa, a stretch, a phone call, the printer or the archive' },
   { icon: 'sleep', text: 'Dozing after a long quiet spell' },
   { icon: '+2', text: 'More helpers than there are desks (shown for the person you clicked)' },
 ]
@@ -35,8 +35,8 @@ const LAMPS: { color: string; text: string }[] = [
 function Lighting() {
   const [theme, setTheme] = useState<Theme>(currentTheme)
   return (
-    <div className="seg" role="group" aria-label="Lighting">
-      {([['system', 'Auto'], ['dark', 'Night'], ['light', 'Day']] as const).map(([k, l]) => (
+    <div className="seg" role="group" aria-label="Theme">
+      {([['system', 'Auto'], ['dark', 'Dark'], ['light', 'Light']] as const).map(([k, l]) => (
         <button
           key={k}
           aria-pressed={theme === k}
@@ -125,7 +125,7 @@ export function KeyPanel() {
         </Row>
         <p className="note">
           In the hub: this notice board, the clock, and the plan meter showing your 5 hour and weekly use (click it for details). The
-          lamp over the entrance is green while HQ is live and blinks red while it reconnects. The windows show the sky for the time of day.
+          lamp by the front door is green while HQ is live and blinks red while it reconnects. The back windows show the sky for the time of day.
         </p>
       </section>
 
@@ -180,8 +180,11 @@ export function KeyPanel() {
       </section>
 
       <section>
-        <h3>Lighting</h3>
-        <p className="note">The light switch by the entrance flips between day and night. Auto follows your system.</p>
+        <h3>Theme</h3>
+        <p className="note">
+          Daylight in the office follows your clock: it gets dark in the evening, and the lamps, windows and screens light up. The
+          light switch on the back wall, above the hub’s corridor, flips the panels between light and dark. Auto follows your system.
+        </p>
         <Lighting />
       </section>
     </div>

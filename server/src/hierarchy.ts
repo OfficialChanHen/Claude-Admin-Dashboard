@@ -10,6 +10,7 @@ import { headlessSession, sessionTarget, startPrompt } from './prompt.js'
 import { sessionChat } from './chat.js'
 import { currentBudget } from './budget.js'
 import { MCP_SERVER, type ExtraTools } from './mcp.js'
+import { helperName, nameSessions, taskTitle } from './names.js'
 
 // Managers and the boss. Reports go up the ranks:
 //   helper (subagent) -> agent (session) -> manager -> boss
@@ -73,7 +74,7 @@ export function sharedFiles(ds: AgentDigest[]) {
 export function formatDigest(ds: AgentDigest[], now: number) {
   const out: string[] = []
   for (const d of ds) {
-    out.push(`Agent "${d.title}" (session ${d.id}, ${d.state}, last active ${ago(now - d.lastAt)})`)
+    out.push(`Agent "${d.title}" (${d.state}, last active ${ago(now - d.lastAt)}; session id for prompt_agent: ${d.id})`)
     if (d.asked.length) out.push(`  Asked: ${d.asked.map((a) => `"${a}"`).join('; ')}`)
     out.push(`  Did: ${d.steps} steps${d.failed ? `, ${d.failed} failed` : ''}${d.edited.length ? `; edited ${d.edited.slice(0, 12).join(', ')}` : ''}`)
     if (d.helpers.length) out.push(`  Its helpers: ${d.helpers.join('; ')}`)
@@ -84,48 +85,67 @@ export function formatDigest(ds: AgentDigest[], now: number) {
   return out.join('\n')
 }
 
+/** How a report should read, for managers and the boss alike. */
+const READABLE =
+  'Call each agent by its name in quotes, never by its session id. Say what changed for the user rather than listing files or step counts, unless a file is the problem. Short sentences, markdown bullets, no headings or tables.'
+
+/** A fresh session doesn't remember earlier rounds, so it gets its last report. */
+const earlier = (previous?: string) => (previous ? ['Your last report, from before this fresh session:', '', previous, ''] : [])
+
 /** With no boss (only one project busy), the manager reports straight to the user. */
-export function managerPrompt(project: string, digest: string, hasBoss: boolean, from?: string) {
+export function managerPrompt(project: string, digest: string, hasBoss: boolean, from?: string, previous?: string) {
   const up = hasBoss ? 'the boss' : 'the user'
   return [
     from ? `[A message from the boss]\n${from}\n` : '',
     `You are the manager of the project "${project}" in Claude HQ. Your agents are the Claude Code sessions working in this project. Their helpers report to them, they report to you, and you report to ${up}.`,
     '',
+    ...earlier(previous),
     'What your agents did since your last report, gathered from their logs:',
     '',
     digest || '(Nothing new.)',
     '',
     '1. Look for problems across agents: two editing the same files, the same work done twice, an agent blocked or failing again and again, or work that undoes another agent\'s.',
     `2. Only if an agent needs to act, send it one short, specific instruction with prompt_agent, using its session id from above. At most ${HIERARCHY.promptsPerRound} this round. An agent that is still working can't be prompted. Don't change code yourself; you may read files to check.`,
-    `3. Finish by calling report once with your summary for ${up}: one line per agent on what it did, then any problems and what you told whom. Plain sentences, under 12 lines, no markdown tables.`,
+    `3. Finish by calling report once with your summary for ${up}. ${READABLE}`,
+    `   - Start with one plain sentence on how the project stands.`,
+    `   - Then one bullet per agent: its name in bold, then what it did or is doing, in words someone who hasn't read the code would follow.`,
+    `   - Then, only if there are any: a bullet starting **Needs you:** for anything ${up} must do, and one starting **Watch:** for problems and what you told whom.`,
+    '   - Under 12 lines.',
   ].join('\n')
 }
 
-export function bossPrompt(sections: string) {
+export function bossPrompt(sections: string, previous?: string) {
   return [
     'You are the boss in Claude HQ. Each busy project has a manager who reports to you; in a project with one agent, that agent reports to you directly.',
     '',
+    ...earlier(previous),
     'What came in since your last report:',
     '',
     sections || '(Nothing new.)',
     '',
     '1. Look for problems that cross projects: one project waiting on another, the same fix needed in several, or work that conflicts.',
     `2. Only if something needs to happen, send one short, specific instruction with prompt_manager (to a project's manager) or prompt_agent (to an agent in a project with no manager). At most ${HIERARCHY.promptsPerRound} this round. Don't change code yourself; you may read files to check.`,
-    '3. Finish by calling report once with your summary for the user: one line per project, then any problems across projects and what you told whom. Plain sentences, under 15 lines, no markdown tables.',
+    `3. Finish by calling report once with your summary for the user. ${READABLE}`,
+    '   - Start with one plain sentence on how things stand overall.',
+    '   - Then one bullet per project: its name in bold, then what its agents did or are doing, each agent by its name.',
+    '   - Then, only if there are any: a bullet starting **Needs you:** for anything the user must do, and one starting **Watch:** for problems across projects and what you told whom.',
+    '   - Under 15 lines.',
   ].join('\n')
 }
 
 // ---- Runtime -------------------------------------------------------------
 
-type RoleRow = { session_id: string; role: Role; project_id: string | null; started_at: number; last_round: number | null }
+type RoleRow = { session_id: string; role: Role; project_id: string | null; started_at: number; last_round: number | null; retired_at: number | null }
 /** The round each running manager or boss is in: prompts sent so far and whether it reported. */
 const rounds = new Map<string, { startedAt: number; prompts: number; reported: boolean; cwd: string }>()
 
-const roleRows = () => all<RoleRow>('SELECT session_id, role, project_id, started_at, last_round FROM roles')
-export const roleOf = (sid: string) => get<RoleRow>('SELECT session_id, role, project_id, started_at, last_round FROM roles WHERE session_id = ?', sid)
+const COLS = 'session_id, role, project_id, started_at, last_round, retired_at'
+/** The manager and boss sessions HQ resumes now; retired ones are left out. */
+const roleRows = () => all<RoleRow>(`SELECT ${COLS} FROM roles WHERE retired_at IS NULL`)
+export const roleOf = (sid: string) => get<RoleRow>(`SELECT ${COLS} FROM roles WHERE session_id = ?`, sid)
 
 function agentsNow(now: number) {
-  const ids = new Set(roleRows().map((r) => r.session_id))
+  const ids = new Set(all<{ session_id: string }>('SELECT session_id FROM roles').map((r) => r.session_id))
   return (activeSessions(now - ACTIVE_WINDOW_MS) as Agent[]).filter((a) => !ids.has(a.id))
 }
 
@@ -137,12 +157,12 @@ function digestFor(a: Agent, since: number): AgentDigest {
     .reverse()
   const acts = all<{ tool: string; summary: string | null; is_error: number }>('SELECT tool, summary, is_error FROM actions WHERE session_id = ? AND ts > ?', a.id, since)
   const edited = [...new Set(acts.filter((x) => ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(x.tool) && x.summary).map((x) => x.summary!))]
-  const helpers = all<{ description: string | null }>('SELECT description FROM agents WHERE session_id = ? AND started_at > ?', a.id, since)
-    .map((h) => cut(h.description ?? 'a helper', 80))
+  const helpers = all<{ description: string | null; agent_type: string | null }>('SELECT description, agent_type FROM agents WHERE session_id = ? AND started_at > ?', a.id, since)
+    .map((h) => cut(helperName(h.description, h.agent_type), 80))
   const reply = sessionChat(a.id, a.cwd).filter((l) => l.kind === 'claude' && l.ts > since).at(-1)
   return {
     id: a.id,
-    title: a.title ?? 'Untitled session',
+    title: a.title ?? (asked[0] ? taskTitle(asked[0]) : null) ?? 'Untitled session',
     state: a.state,
     lastAt: a.lastAt,
     asked,
@@ -173,6 +193,20 @@ function endRound(sid: string) {
 
 const TOOL = (name: string) => `mcp__${MCP_SERVER}__${name}`
 
+/**
+ * Whether this round resumes the role's session or starts a fresh one. After
+ * HIERARCHY.roundsPerSession rounds the old session is retired, and the fresh
+ * one gets the last report in its prompt instead of the whole conversation.
+ */
+function nextSession(row: RoleRow | undefined, now: number): { existing?: string; previous?: string } {
+  if (!row) return {}
+  const done = get<{ n: number }>('SELECT COUNT(*) n FROM reports WHERE session_id = ?', row.session_id)?.n ?? 0
+  if (done < HIERARCHY.roundsPerSession) return { existing: row.session_id }
+  run('UPDATE roles SET retired_at = ? WHERE session_id = ?', now, row.session_id)
+  const last = get<{ text: string }>('SELECT text FROM reports WHERE session_id = ? ORDER BY ts DESC LIMIT 1', row.session_id)
+  return { previous: last?.text }
+}
+
 /** Starts a round, as a new session or by resuming the one this role already has. */
 function startRound(role: Role, projectId: string | null, cwd: string, text: string, existing: string | undefined, now: number) {
   const sid = existing ?? randomUUID()
@@ -187,8 +221,17 @@ function startRound(role: Role, projectId: string | null, cwd: string, text: str
       existing,
       {
         newId: existing ? undefined : sid,
-        // They read and delegate; anything else would ask you in HQ.
-        extraArgs: ['--allowedTools', 'Read', 'Grep', 'Glob', ...tools.map(TOOL), '--disallowedTools', 'Edit', 'Write', 'NotebookEdit', 'Bash', 'Task', 'Agent'],
+        // They only read and delegate, so they get just those tools: no other
+        // built-in tools, none of your MCP servers and no skills. Every tool
+        // left out is one less definition sent with each of their requests.
+        extraArgs: [
+          '--model', HIERARCHY.model,
+          '--effort', HIERARCHY.effort,
+          '--tools', 'Read,Grep,Glob',
+          '--allowedTools', 'Read', 'Grep', 'Glob', ...tools.map(TOOL),
+          '--strict-mcp-config',
+          '--disable-slash-commands',
+        ],
         onExit: () => endRound(sid),
       },
     )
@@ -209,7 +252,8 @@ function managerRound(projectId: string, agents: Agent[], row: RoleRow | undefin
   if (!project || !fs.existsSync(project.path)) return
   const since = row?.last_round ?? now - 3 * ACTIVE_WINDOW_MS
   const digest = formatDigest(agents.map((a) => digestFor(a, since)), now)
-  startRound('manager', projectId, project.path, managerPrompt(project.name, digest, bossNeeded(now), from), row?.session_id, now)
+  const { existing, previous } = nextSession(row, now)
+  startRound('manager', projectId, project.path, managerPrompt(project.name, digest, bossNeeded(now), from, previous), existing, now)
 }
 
 function bossRound(agents: Agent[], managed: Set<string>, row: RoleRow | undefined, now: number) {
@@ -224,7 +268,8 @@ function bossRound(agents: Agent[], managed: Set<string>, row: RoleRow | undefin
   const byProject = new Map<string, Agent[]>()
   for (const a of agents) if (a.projectId && !managed.has(a.projectId)) byProject.set(a.projectId, [...(byProject.get(a.projectId) ?? []), a])
   for (const [pid, list] of byProject) parts.push(`Project "${names.get(pid) ?? pid}" has no manager; its agent:\n${formatDigest(list.map((a) => digestFor(a, since)), now)}`)
-  startRound('boss', null, bossDir(), bossPrompt(parts.join('\n\n')), row?.session_id, now)
+  const { existing, previous } = nextSession(row, now)
+  startRound('boss', null, bossDir(), bossPrompt(parts.join('\n\n'), previous), existing, now)
 }
 
 /** Checks the ranks and starts any round that is due. Runs every 30 seconds. */
@@ -328,15 +373,29 @@ function callTool(me: RoleRow, name: string, args: Record<string, unknown>, now 
   return 'Unknown tool.'
 }
 
+/** Names for the sessions a set of reports mention by id, so they read as tasks. */
+function namesIn(texts: string[]) {
+  const shorts = [...new Set(texts.flatMap((t) => t.toLowerCase().match(/\b[0-9a-f]{8}\b/g) ?? []))]
+  if (!shorts.length) return new Map<string, string>()
+  const rows = all<{ id: string; title: string }>(
+    `SELECT id, title FROM sessions WHERE title IS NOT NULL AND substr(id, 1, 8) IN (${shorts.map(() => '?').join(', ')})`,
+    ...shorts,
+  )
+  return new Map(rows.map((r) => [r.id, r.title]))
+}
+
 export function hierarchyState(limit = 30) {
+  const reports = all<Report>(
+    'SELECT id, session_id sessionId, role, project_id projectId, ts, text FROM reports ORDER BY ts DESC LIMIT ?',
+    limit,
+  )
+  // Older reports called agents by session id; show their names instead.
+  const names = namesIn(reports.map((r) => r.text))
   return {
     on: HIERARCHY.on,
     everyMin: HIERARCHY.everyMs / 60_000,
     roles: roleRows().map((r) => ({ sessionId: r.session_id, role: r.role, projectId: r.project_id, lastRound: r.last_round, running: rounds.has(r.session_id) })),
-    reports: all<{ id: string; sessionId: string; role: Role; projectId: string | null; ts: number; text: string }>(
-      'SELECT id, session_id sessionId, role, project_id projectId, ts, text FROM reports ORDER BY ts DESC LIMIT ?',
-      limit,
-    ),
+    reports: reports.map((r) => ({ ...r, text: nameSessions(r.text, names) })),
   }
 }
 

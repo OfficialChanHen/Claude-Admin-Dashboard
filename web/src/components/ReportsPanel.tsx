@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type Hierarchy, type Project, type Report } from '../lib/api'
-import { clock } from '../lib/format'
+import { ago, clock } from '../lib/format'
+import { headline, splitReport } from '../lib/reports'
 import { Markdown } from './Markdown'
 
 /**
@@ -19,6 +20,7 @@ export function ReportsPanel({ projects, refreshKey, onOpen }: { projects: Map<s
 
   const name = (r: Pick<Report, 'role' | 'projectId'>) =>
     r.role === 'boss' ? 'The boss' : `Manager of ${projects.get(r.projectId ?? '')?.name ?? 'a project'}`
+  const when = (ts: number) => `${ago(ts)}, ${clock(ts)}`
   // The newest report from each, the boss first.
   const latest = new Map<string, Report>()
   for (const r of h.reports) if (!latest.has(r.sessionId)) latest.set(r.sessionId, r)
@@ -27,26 +29,30 @@ export function ReportsPanel({ projects, refreshKey, onOpen }: { projects: Map<s
 
   return (
     <div className="reports">
-      <p className="note">
-        A project gets a manager once two or more agents work in it at once, and the boss comes in once two or more projects
-        have agents at work. Each sums up its agents at most every {h.everyMin} minutes, only when something new happened, and can
-        prompt the agents below it. Each round is a prompt on your plan.
-        {!h.on && ' They are turned off (HQ_HIERARCHY=off).'}
-      </p>
+      {!h.on && <p className="note">Managers and the boss are turned off (HQ_HIERARCHY=off).</p>}
       {h.roles.filter((r) => r.running).map((r) => (
         <p key={r.sessionId} className="note">{name(r)} is putting a report together…</p>
       ))}
       {top.length ? (
         <ul className="report-list">
-          {top.map((r) => (
-            <li key={r.id} className={`report ${r.role}`}>
-              <div className="report-head">
-                <button className="link" onClick={() => onOpen(r.sessionId)}>{name(r)}</button>
-                <span className="report-time">{clock(r.ts)}</span>
-              </div>
-              <div className="chat-text md"><Markdown text={r.text} /></div>
-            </li>
-          ))}
+          {top.map((r) => {
+            const { needsYou, body } = splitReport(r.text)
+            return (
+              <li key={r.id} className={`report ${r.role}`}>
+                <div className="report-head">
+                  <button className="link" onClick={() => onOpen(r.sessionId)}>{name(r)}</button>
+                  <span className="report-time" title={new Date(r.ts).toLocaleString()}>{when(r.ts)}</span>
+                </div>
+                {needsYou.length > 0 && (
+                  <div className="report-needs">
+                    <b>Needs you</b>
+                    <ul>{needsYou.map((n, i) => <li key={i}><Markdown text={n} /></li>)}</ul>
+                  </div>
+                )}
+                <div className="chat-text md"><Markdown text={body} /></div>
+              </li>
+            )
+          })}
         </ul>
       ) : (
         <p className="note">No reports yet.</p>
@@ -57,16 +63,26 @@ export function ReportsPanel({ projects, refreshKey, onOpen }: { projects: Map<s
           <ul className="report-list">
             {older.map((r) => (
               <li key={r.id} className={`report ${r.role}`}>
-                <div className="report-head">
-                  <span>{name(r)}</span>
-                  <span className="report-time">{clock(r.ts)}</span>
-                </div>
-                <div className="chat-text md"><Markdown text={r.text} /></div>
+                <details>
+                  <summary className="report-head">
+                    <span>{name(r)}: {headline(r.text)}</span>
+                    <span className="report-time" title={new Date(r.ts).toLocaleString()}>{when(r.ts)}</span>
+                  </summary>
+                  <div className="chat-text md"><Markdown text={r.text} /></div>
+                </details>
               </li>
             ))}
           </ul>
         </details>
       )}
+      <details className="report-older">
+        <summary>How reports work</summary>
+        <p className="note">
+          A project gets a manager once two or more agents work in it at once, and the boss comes in once two or more projects
+          have agents at work. Each sums up its agents at most every {h.everyMin} minutes, only when something new happened, and can
+          prompt the agents below it. Each round is a prompt on your plan.
+        </p>
+      </details>
     </div>
   )
 }

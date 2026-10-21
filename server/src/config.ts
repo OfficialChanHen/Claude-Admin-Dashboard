@@ -44,6 +44,12 @@ export const HIERARCHY = {
   everyMs: Number(process.env.HQ_REPORT_MIN ?? 10) * 60_000,
   // Prompts one round may send to the rank below, so a round can't start a storm.
   promptsPerRound: 2,
+  // Reading a digest and writing a summary doesn't need the biggest model.
+  model: process.env.HQ_ROLE_MODEL ?? 'sonnet',
+  effort: process.env.HQ_ROLE_EFFORT ?? 'low',
+  // Every resume re-reads the whole conversation, so after this many rounds a
+  // manager or the boss starts a fresh session with only its last report.
+  roundsPerSession: Number(process.env.HQ_ROLE_ROUNDS ?? 6),
 }
 
 // The 5 hour budget (see budget.ts). Sessions are asked to wrap up at

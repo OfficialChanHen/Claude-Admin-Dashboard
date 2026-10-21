@@ -190,6 +190,14 @@ CREATE TABLE IF NOT EXISTS reports (
 CREATE INDEX IF NOT EXISTS reports_ts ON reports(ts);
 `)
 
+// A manager or boss session HQ stopped resuming in favour of a fresh one. Its
+// row stays so the old session is still known as HQ's own, not an agent.
+try {
+  db.exec('ALTER TABLE roles ADD COLUMN retired_at INTEGER')
+} catch {
+  // already there
+}
+
 export type Row = Record<string, unknown>
 
 export function all<T = Row>(sql: string, ...params: unknown[]): T[] {

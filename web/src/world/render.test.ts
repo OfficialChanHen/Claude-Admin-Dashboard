@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Camera } from './camera'
 import { buildOffice, TILE } from './office'
 import { WorldModel, type Sprite } from './model'
-import { ART, doorAt, hitFloor, hitRect, hitTest, isGreyHair, lampFor, lookOf, roleTag, swapColors, BOSS, MANAGER, SENIORS, JUNIORS, podCenter, podStatus, sameHit, skyAt, statusText, wrap, type Frame } from './render'
+import { ART, doorAt, hitFloor, hitRect, hitTest, isGreyHair, lampFor, lookOf, roleTag, swapColors, BOSS, MANAGER, SENIORS, JUNIORS, podCenter, podStatus, sameHit, skyAt, darkness, LAMPS_ON, statusText, wrap, type Frame } from './render'
 
 const office = buildOffice([
   { id: 'a', name: 'Alpha' },
@@ -221,6 +221,17 @@ describe('things on the walls', () => {
     expect(skyAt(12).clouds).toBe(true)
     expect(skyAt(12).stars).toBe(false)
     expect(skyAt(22).stars).toBe(true)
+  })
+
+  it('gets dark by the clock, lighting the lamps after dusk', () => {
+    expect(darkness(12)).toBe(0)
+    expect(darkness(2)).toBe(1)
+    expect(darkness(23.5)).toBe(1)
+    expect(darkness(6)).toBeCloseTo(0.5)
+    // Darkening all evening, never lighter later on.
+    for (let h = 17; h < 24; h += 0.25) expect(darkness(h + 0.25)).toBeGreaterThanOrEqual(darkness(h))
+    expect(darkness(18)).toBeLessThan(LAMPS_ON)
+    expect(darkness(20)).toBeGreaterThanOrEqual(LAMPS_ON)
   })
 })
 

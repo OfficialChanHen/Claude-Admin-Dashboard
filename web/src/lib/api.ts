@@ -43,9 +43,21 @@ export type LiveEvent =
   | { kind: 'clipboard'; projectId: string }
   | { kind: 'report'; report: Report }
   | { kind: 'hierarchy' }
+  | { kind: 'git'; projectId: string; change: 'commit' | 'push'; subject: string | null; ts: number }
+  | { kind: 'git_state' }
+  | { kind: 'previews' }
   | { kind: 'approval'; approval: Approval }
   | { kind: 'approval_done'; id: string; decision: 'allow' | 'deny' | null }
   | { kind: 'hello'; recent: LiveEvent[]; limits: Limits | null; approvals?: Approval[] }
+
+/** A project's git state, for its whiteboard and how lived-in its room looks. */
+export type GitInfo = {
+  projectId: string; branch: string | null; head: string | null; subject: string | null; lastCommitAt: number | null; commits: number
+  ahead: number | null; files: number; added: number; removed: number; lastActiveAt: number | null
+}
+/** Pictures of a project's running dev server and its live site, for the TV in its room. */
+export type Shot = { url: string; shotAt: number | null }
+export type Preview = { projectId: string; dev: (Shot & { port: number }) | null; prod: Shot | null }
 
 /** A session asking to use a tool, held until you answer here or it goes back to the terminal. */
 export type Approval = {
@@ -142,6 +154,8 @@ export const api = {
   session: (id: string) => req<SessionDetail>(`/api/sessions/${id}`),
   active: () => req<ActiveSession[]>('/api/active'),
   limits: () => req<Limits | null>('/api/limits'),
+  git: () => req<GitInfo[]>('/api/git'),
+  previews: () => req<Preview[]>('/api/previews'),
   prompt: (body: { projectId: string; sessionId?: string; text: string; mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan'; when?: 'now' | 'spare' }) =>
     req<{ ok: true; resumed?: string | null; queued?: string }>('/api/prompt', { method: 'POST', body: JSON.stringify(body) }),
   budget: () => req<Budget>('/api/budget'),

@@ -18,6 +18,10 @@ export type LiveEvent =
   | { kind: 'clipboard'; projectId: string }
   | { kind: 'report'; report: Report }
   | { kind: 'hierarchy' }
+  /** A commit or a push in a project, seen in its reflog. */
+  | { kind: 'git'; projectId: string; change: 'commit' | 'push'; subject: string | null; ts: number }
+  | { kind: 'git_state' }
+  | { kind: 'previews' }
   | ApprovalEvent
 
 export type SessionState = 'working' | 'waiting' | 'idle' | 'ended'

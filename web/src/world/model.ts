@@ -1,16 +1,20 @@
 import type { ActiveSession, LiveEvent, Role, SessionState } from '../lib/api'
-import { JUNIOR_SLOTS, SENIOR_SLOTS, route, type BreakSpot, type Facing, type Office, type Pod, type Point } from './office'
+import { JUNIOR_SLOTS, SENIOR_SLOTS, TILE, route, type BreakSpot, type Facing, type HubSeat, type Office, type Pod, type Point, type Rect } from './office'
 import { TASKS, taskOf, type Station, type TaskKind } from './tasks'
+import { chatFor, lineFor, topicFor, type Topic } from './chatter'
 
 export type { Station } from './tasks'
 
 // The people in the office. Each open session is a senior employee with a
 // desk in their project's area; each subagent is a junior who comes in the
 // door, gets briefed, works at a junior desk, reports back and leaves. When
-// nothing is happening they take breaks, look around and doze off. The canvas
-// reads this every frame; it holds no React state.
+// nothing is happening they take breaks, look around and doze off. Nobody
+// shares a spot: each seat, break spot or place at the whiteboard holds one
+// person, counting whoever is already walking there. The canvas reads this
+// every frame; it holds no React state.
 
-export type Bubble = { text: string; until: number; you: boolean }
+/** `chatter` is small talk from ./chatter, not words from the session. */
+export type Bubble = { text: string; until: number; you: boolean; chatter?: boolean }
 export type Emote = 'idea' | 'done' | 'error' | 'ask' | 'coffee' | 'music'
 export type Rank = 'senior' | 'junior'
 export type Activity = 'arrive' | 'brief' | 'work' | 'break' | 'report' | 'leave'
@@ -64,6 +68,10 @@ export type Sprite = {
   placed: boolean
   /** Picked up by you and being carried, or waiting at the door for you to confirm. */
   held: boolean
+  /** Next time they might make small talk, and an answer they owe someone on a break. */
+  chatAt: number
+  lastChat: string
+  reply: { text: string; at: number } | null
 }
 
 export const OTHER = '_other'
@@ -74,6 +82,15 @@ export function nameOf(a: Pick<ActiveSession, 'title' | 'role'>) {
   return a.role === 'boss' ? 'The boss' : a.role === 'manager' ? 'Manager' : a.title ?? 'Untitled session'
 }
 
+const HELPER_KINDS: Record<string, string> = { 'general-purpose': 'Helper', Explore: 'Explorer', Plan: 'Planner' }
+
+/** What a helper is called: the task it was handed, or else what kind of helper it is. */
+export function helperName(description: string | null | undefined, agentType: string | null | undefined) {
+  if (description?.trim()) return description.trim()
+  if (!agentType) return 'Helper'
+  return HELPER_KINDS[agentType] ?? agentType.replace(/[-_]+/g, ' ').replace(/^./, (c) => c.toUpperCase())
+}
+
 const RECENT_MS = 20_000 // older events update state but show no bubbles
 const HELPER_MAX_AGE_MS = 120_000
 const SESSION_MAX_AGE_MS = 10 * 60_000 // matches the server's active window
@@ -82,6 +99,10 @@ export const BRIEF_MS = 2200
 export const REPORT_MS = 3800
 const BREAK_AFTER_MS = 4000
 const DOZE_AFTER_MS = 4 * 60_000
+const CHAT_EVERY_MS = 25_000 // each person, plus up to CHAT_SPREAD_MS
+const CHAT_SPREAD_MS = 45_000
+const CHAT_GAP_MS = 3500 // across the floor, so they don't all talk at once
+const REPLY_MS = 1800
 
 /** Where a tool is used. Most work happens at the desk. */
 export function stationFor(tool: string): Station {
@@ -96,8 +117,8 @@ function hash(s: string) {
   return h >>> 0
 }
 
-function bubbleMs(text: string) {
-  return Math.min(12_000, 3500 + text.length * 45)
+function bubbleMs(text: string, chatter = false) {
+  return chatter ? Math.min(5000, 2200 + text.length * 40) : Math.min(12_000, 3500 + text.length * 45)
 }
 
 export function clip(text: string, max = 160) {
@@ -119,6 +140,9 @@ export class WorldModel {
   seated = new Set<string>()
   private seniorDesks = new Map<string, (string | null)[]>()
   private juniorDesks = new Map<string, (string | null)[]>()
+  /** Who sits in each of the hub's spare seats. */
+  private hubTaken: (string | null)[] = []
+  private quietUntil = 0
   private rand: () => number
 
   constructor(rand: () => number = Math.random) {
@@ -131,6 +155,7 @@ export class WorldModel {
     this.office = office
     this.seniorDesks.clear()
     this.juniorDesks.clear()
+    this.hubTaken = office.hubSeats.map(() => null)
     for (const s of this.sprites.values()) {
       s.slot = null
       s.placed = false
@@ -155,7 +180,11 @@ export class WorldModel {
     if (i >= 0) {
       desks[i] = s.key
       s.slot = i
+      return
     }
+    // Their room is full: a spare seat in the hub, if there is one.
+    const h = this.hubTaken.indexOf(null)
+    if (h >= 0) this.hubTaken[h] = s.key
   }
 
   private release(s: Sprite) {
@@ -163,32 +192,106 @@ export class WorldModel {
     const desks = table.get(s.zone)
     if (desks && s.slot != null && desks[s.slot] === s.key) desks[s.slot] = null
     s.slot = null
+    const h = this.hubTaken.indexOf(s.key)
+    if (h >= 0) this.hubTaken[h] = null
+    this.reseat(s)
   }
 
-  /** The chair this person works from. Seniors without a free desk use the hub table. */
+  /** A seat came free: whoever is in the hub or standing moves up, to a desk in their own room first. */
+  private reseat(except: Sprite) {
+    for (const o of this.sprites.values()) {
+      if (o === except || o.slot != null || !o.placed || o.activity === 'leave') continue
+      const desks = (o.rank === 'senior' ? this.seniorDesks : this.juniorDesks).get(o.zone)
+      const deskFree = !desks || desks.includes(null)
+      const inHub = this.hubTaken.includes(o.key)
+      if (!deskFree && (inHub || !this.hubTaken.includes(null))) continue
+      if (inHub && deskFree) this.hubTaken[this.hubTaken.indexOf(o.key)] = null
+      this.claim(o)
+      if (o.activity === 'work' && !o.held) this.walk(o, this.spotFor(o, o.station))
+    }
+  }
+
+  private hubSeatOf(s: Sprite): HubSeat | null {
+    const h = this.hubTaken.indexOf(s.key)
+    return h >= 0 ? this.office!.hubSeats[h] ?? null : null
+  }
+
+  /**
+   * The chair this person works from. Without a free desk in their room they
+   * use a spare seat in the hub, and with every seat taken they stand at the
+   * back of their room.
+   */
   seat(s: Sprite): Point | null {
     const pod = this.pod(s.zone)
     if (!pod) return null
-    if (s.slot == null) {
-      const spots = this.office!.breakSpots.filter((b) => b.kind === 'table')
-      return spots[s.seed % spots.length] ?? pod.board
-    }
-    return s.rank === 'senior' ? pod.seniorSeats[s.slot] : pod.juniorSeats[s.slot]
+    if (s.slot != null) return s.rank === 'senior' ? pod.seniorSeats[s.slot] : pod.juniorSeats[s.slot]
+    const h = this.hubSeatOf(s)
+    if (h) return h
+    const y = pod.aisles[pod.aisles.length - 1]
+    return this.freeSpot(s, Array.from({ length: pod.rect.w / TILE }, (_, c) => ({ x: pod.rect.x + c * TILE + 8, y })))
+  }
+
+  /** The desk someone works at: their own, or a hot desk in the hub. */
+  deskFor(s: Sprite): Rect | null {
+    const pod = this.pod(s.zone)
+    if (pod && s.slot != null) return s.rank === 'senior' ? pod.seniorDesks[s.slot] : pod.juniorDesks[s.slot]
+    const h = this.hubSeatOf(s)
+    return h?.kind === 'hotdesk' ? h.desk : null
   }
 
   private spotFor(s: Sprite, st: Station): Point | null {
     const pod = this.pod(s.zone)
     if (!pod) return null
-    if (st === 'board') return { x: pod.board.x + ((s.seed % 3) - 1) * 10, y: pod.board.y }
-    if (st === 'cabinet') return { x: pod.cabinet.x - (s.seed % 2) * 12, y: pod.cabinet.y }
+    if (st === 'board') {
+      // Each person has a favourite place along the board, and moves along if it's taken.
+      const k = s.seed % 3
+      const dxs = [-10, 0, 10]
+      return this.freeSpot(s, [...dxs.slice(k), ...dxs.slice(0, k), -20, 20].map((dx) => ({ x: pod.board.x + dx, y: pod.board.y })))
+    }
+    if (st === 'cabinet') {
+      const dxs = s.seed % 2 ? [-12, 0] : [0, -12]
+      dxs.push(pod.look.mirror ? 12 : -24)
+      return this.freeSpot(s, dxs.map((dx) => ({ x: pod.cabinet.x + dx, y: pod.cabinet.y })))
+    }
     return this.seat(s)
   }
 
-  /** Beside the boss's desk, where juniors get briefed and report back. */
+  /** Is anyone else at this spot, or walking to it? People being carried or leaving don't count. */
+  private taken(p: Point, s: Sprite) {
+    for (const o of this.sprites.values()) {
+      if (o === s || !o.placed || o.held || o.activity === 'leave') continue
+      const e = o.path[o.path.length - 1] ?? o
+      if (Math.abs(e.x - p.x) < 1 && Math.abs(e.y - p.y) < 1) return true
+    }
+    return false
+  }
+
+  /** The first of these spots nobody else has; the first one if everyone is out of room. */
+  private freeSpot(s: Sprite, spots: Point[]): Point | null {
+    return spots.find((p) => !this.taken(p, s)) ?? spots[0] ?? null
+  }
+
+  /** Beside the boss's desk, where juniors get briefed and report back: right of it, left of it, or behind. */
   private besideBoss(s: Sprite): Point | null {
     const boss = s.bossKey ? this.sprites.get(s.bossKey) : null
     const seat = boss ? this.seat(boss) : null
-    return seat ? { x: seat.x + 14, y: seat.y + 2 } : null
+    if (!seat) return null
+    return this.freeSpot(s, [{ x: seat.x + 14, y: seat.y + 2 }, { x: seat.x - 14, y: seat.y + 2 }, { x: seat.x, y: seat.y + 15 }])
+  }
+
+  /** Turns to face a point. */
+  private faceTo(s: Sprite, p: Point) {
+    const dx = p.x - s.x
+    const dy = p.y - s.y
+    s.facing = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up'
+  }
+
+  /** A junior at the hand-off turns to their boss. */
+  private faceBoss(j: Sprite) {
+    const boss = j.bossKey ? this.sprites.get(j.bossKey) : null
+    const seat = boss ? this.seat(boss) : null
+    if (seat) this.faceTo(j, seat)
+    else j.facing = 'left'
   }
 
   private walk(s: Sprite, to: Point | null) {
@@ -231,11 +334,13 @@ export class WorldModel {
       tool: null, summary: '', actionId: null, running: false, actAt: 0, bubble: null, emote: null, lastAt: o.ts,
       restUntil: 0, lookUntil: 0, lookDir: 'down', slot: null,
       toolUseId: null, bossKey: rank === 'junior' ? o.sessionId : null, lastSay: '', placed: false, held: false,
+      chatAt: o.now + 8000 + this.rand() * 20_000, lastChat: '', reply: null,
     }
     this.sprites.set(key, s)
     const back = this.seated.delete(key)
     if (back) s.activity = 'work'
     this.place(s, o.atDoor && !back, o.now)
+    if (o.atDoor && !back && s.placed && o.now - o.ts < RECENT_MS && this.rand() < 0.6) this.chat(s, rank === 'junior' ? 'helloJunior' : 'hello', o.now)
     return s
   }
 
@@ -265,7 +370,7 @@ export class WorldModel {
     }
   }
 
-  private leave(s: Sprite) {
+  private leave(s: Sprite, now: number) {
     if (s.activity === 'leave') return
     s.activity = 'leave'
     s.running = false
@@ -277,14 +382,15 @@ export class WorldModel {
     }
     s.path = []
     this.walk(s, this.office.door)
+    if (s.rank === 'senior' && this.rand() < 0.6) this.chat(s, 'bye', now)
   }
 
   private setState(s: Sprite, state: SessionState, now: number) {
     const was = s.state
     s.state = state
     if (state === 'ended') {
-      this.leave(s)
-      for (const j of this.sprites.values()) if (j.bossKey === s.key) this.leave(j)
+      this.leave(s, now)
+      for (const j of this.sprites.values()) if (j.bossKey === s.key) this.leave(j, now)
       return
     }
     if (state === 'idle') {
@@ -313,7 +419,7 @@ export class WorldModel {
       }
       s = this.make({
         sessionId: ev.sessionId, agentId: ev.agentId, zone: ev.projectId ?? OTHER, atDoor: true,
-        state: 'working', ts: ev.ts, label: ev.agentId ? 'Junior' : 'Session', now,
+        state: 'working', ts: ev.ts, label: ev.agentId ? 'Helper' : 'Session', now,
       })
     }
     return s
@@ -341,8 +447,8 @@ export class WorldModel {
     s.emote = { kind, until: now + ms, since: now }
   }
 
-  private say(s: Sprite, text: string, now: number, you = false) {
-    s.bubble = { text: clip(text), until: now + bubbleMs(text), you }
+  private say(s: Sprite, text: string, now: number, you = false, chatter = false) {
+    s.bubble = { text: clip(text), until: now + bubbleMs(text, chatter), you, chatter }
   }
 
   ingest(ev: LiveEvent, now = Date.now()) {
@@ -361,7 +467,7 @@ export class WorldModel {
         if (!live) return
         const s = this.spriteFor(ev, true, now)
         if (!s) return
-        s.label = ev.description ?? ev.agentType ?? 'Junior'
+        s.label = helperName(ev.description, ev.agentType)
         s.toolUseId = ev.toolUseId ?? null
         return
       }
@@ -430,7 +536,7 @@ export class WorldModel {
           if (s.state !== ev.state) this.setState(s, ev.state, now)
         }
         if (ev.state === 'ended') {
-          for (const j of this.sprites.values()) if (j.sessionId === ev.sessionId && j.rank === 'junior') this.leave(j)
+          for (const j of this.sprites.values()) if (j.sessionId === ev.sessionId && j.rank === 'junior') this.leave(j, now)
           this.hidden.delete(ev.sessionId)
         }
         return
@@ -448,7 +554,7 @@ export class WorldModel {
   }
 
   private deliver(j: Sprite, now: number) {
-    j.facing = 'left'
+    this.faceBoss(j)
     j.restUntil = now + REPORT_MS
     this.emote(j, 'done', now, REPORT_MS)
     if (j.lastSay) this.say(j, j.lastSay, now)
@@ -509,6 +615,7 @@ export class WorldModel {
       }
       const arrived = this.move(s, dt)
       this.behave(s, arrived, now)
+      if (this.sprites.has(s.key)) this.smallTalk(s, now)
     }
     // Forget hidden juniors that have gone quiet.
     for (const [sid, m] of this.hidden) {
@@ -552,7 +659,7 @@ export class WorldModel {
         if (walking) return
         if (s.rank === 'junior' && this.besideBoss(s)) {
           s.activity = 'brief'
-          s.facing = 'left'
+          this.faceBoss(s)
           s.restUntil = now + BRIEF_MS
         } else {
           s.activity = 'work'
@@ -569,7 +676,7 @@ export class WorldModel {
       case 'report':
         if (walking) return
         if (arrived) return this.deliver(s, now)
-        if (now >= s.restUntil) this.leave(s)
+        if (now >= s.restUntil) this.leave(s, now)
         return
       case 'work':
         if (walking) return
@@ -596,9 +703,12 @@ export class WorldModel {
           const spot = this.breakSpotAt(s)
           s.facing = spot?.face ?? 'down'
           if (spot?.kind === 'coffee' || spot?.kind === 'vending') this.emote(s, 'coffee', now, 3500)
-          else if (this.rand() < 0.3) this.emote(s, 'music', now, 2500)
+          else if (spot?.kind === 'archive') this.emote(s, 'idea', now, 1600)
+          else if (spot?.kind !== 'phone' && this.rand() < 0.3) this.emote(s, 'music', now, 2500)
         }
-        this.faceCompany(s)
+        // On a call they pace, turning one way then the other; anywhere else they turn to chat.
+        if (this.breakSpotAt(s)?.kind === 'phone') s.facing = (Math.floor(now / 2200) + s.seed) % 2 ? 'left' : 'right'
+        else this.faceCompany(s)
         if (now >= s.restUntil) {
           if (now - s.lastAt > DOZE_AFTER_MS || this.rand() < 0.5) {
             s.activity = 'work'
@@ -613,12 +723,20 @@ export class WorldModel {
   }
 
   private takeBreak(s: Sprite, now: number) {
-    const spots = this.office?.breakSpots ?? []
-    if (!spots.length) return
-    const end = (o: Sprite) => o.path[o.path.length - 1] ?? o
-    const taken = new Set([...this.sprites.values()].filter((o) => o !== s && o.activity === 'break').map((o) => `${end(o).x},${end(o).y}`))
-    const free = spots.filter((b) => !taken.has(`${b.x},${b.y}`))
-    const pool = free.length ? free : spots
+    const free = (this.office?.breakSpots ?? []).filter((b) => !this.taken(b, s))
+    if (!free.length) {
+      // Every spot is taken: back to the desk, and try again later.
+      s.restUntil = now + BREAK_AFTER_MS + this.rand() * 4000
+      if (s.activity === 'break') {
+        s.activity = 'work'
+        this.walk(s, this.seat(s))
+      }
+      return
+    }
+    // Somewhere new if they're already on a break.
+    const here = s.activity === 'break' ? this.breakSpotAt(s) : undefined
+    const elsewhere = free.filter((b) => b !== here)
+    const pool = elsewhere.length ? elsewhere : free
     s.activity = 'break'
     s.restUntil = now + 10_000 + this.rand() * 15_000
     this.walk(s, pool[Math.floor(this.rand() * pool.length)])
@@ -628,22 +746,66 @@ export class WorldModel {
     return this.office?.breakSpots.find((b) => Math.abs(b.x - s.x) < 1 && Math.abs(b.y - s.y) < 1)
   }
 
-  /** Two people on a break near each other turn to chat. */
-  private faceCompany(s: Sprite) {
+  /** The nearest other person on a break close by, if any. */
+  private company(s: Sprite) {
     let best: Sprite | null = null
     let bestD = 40
     for (const o of this.sprites.values()) {
-      if (o === s || o.activity !== 'break' || o.path.length) continue
+      if (o === s || o.activity !== 'break' || o.path.length || this.breakSpotAt(o)?.kind === 'phone') continue
       const d = Math.hypot(o.x - s.x, o.y - s.y)
       if (d < bestD) {
         best = o
         bestD = d
       }
     }
-    if (!best) return
-    const dx = best.x - s.x
-    const dy = best.y - s.y
-    s.facing = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up'
+    return best
+  }
+
+  /** Two people on a break near each other turn to chat. */
+  private faceCompany(s: Sprite) {
+    const best = this.company(s)
+    if (best) this.faceTo(s, best)
+  }
+
+  // ---- small talk ------------------------------------------------------------
+
+  /** Says a line on a topic if nobody else has just spoken and they have nothing better to say. */
+  private chat(s: Sprite, topic: Topic, now: number) {
+    if (now < this.quietUntil || s.bubble || s.held) return false
+    s.lastChat = lineFor(topic, this.rand, s.lastChat)
+    this.say(s, s.lastChat, now, false, true)
+    this.quietUntil = now + CHAT_GAP_MS
+    return true
+  }
+
+  /** Now and then, a line that fits where they are and what they are doing. */
+  private smallTalk(s: Sprite, now: number) {
+    if (s.reply && now >= s.reply.at) {
+      const { text } = s.reply
+      s.reply = null
+      if (s.activity === 'break' && !s.path.length && !s.bubble) this.say(s, text, now, false, true)
+      return
+    }
+    if (now < s.chatAt) return
+    s.chatAt = now + CHAT_EVERY_MS + this.rand() * CHAT_SPREAD_MS
+    if (now < this.quietUntil || s.bubble || s.emote || s.path.length || s.reply) return
+    const spot = s.activity === 'break' ? this.breakSpotAt(s) : undefined
+    if (spot) {
+      // With someone close by, half the time it's a conversation instead.
+      const other = this.company(s)
+      if (other && !other.bubble && !other.reply && this.rand() < 0.5) {
+        const [line, answer] = chatFor(this.rand)
+        this.say(s, line, now, false, true)
+        other.reply = { text: answer, at: now + REPLY_MS }
+        this.quietUntil = now + CHAT_GAP_MS + REPLY_MS
+        return
+      }
+    }
+    const topic = topicFor({
+      rank: s.rank, role: s.role, activity: s.activity, state: s.state, station: s.station,
+      running: s.running, tool: s.tool, summary: s.summary, spot: spot?.kind ?? null, asleep: this.asleep(s, now), now,
+    }, this.rand)
+    if (topic) this.chat(s, topic, now)
   }
 
   /** At the desk with nothing running: glance around now and then. */
@@ -674,8 +836,12 @@ export class WorldModel {
     }
     if (s.activity !== 'work') return null
     const task = s.running && s.tool ? taskOf(s.tool) : null
-    // A senior without a desk of their own works from the hub table.
-    if (s.station === 'desk' && s.slot == null) return null
+    if (s.station === 'desk' && s.slot == null) {
+      // Without a desk of their own: a hot desk or the work table in the hub, or standing.
+      const h = this.hubSeatOf(s)
+      if (!h || Math.abs(h.x - s.x) >= 1 || Math.abs(h.y - s.y) >= 1) return null
+      return { at: h.kind === 'hotdesk' ? 'desk' : 'table', active: s.running, task }
+    }
     return { at: s.station, active: s.running, task }
   }
 

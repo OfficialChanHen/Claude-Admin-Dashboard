@@ -67,7 +67,7 @@ export function taskLabel(tool: string, summary: string, max = 30) {
 }
 
 /** Things on the floor and what happens at them, for tooltips and the key. */
-export type Thing = 'desk' | 'cabinet' | 'board' | 'coffee' | 'vending' | 'table' | 'sofa'
+export type Thing = 'desk' | 'cabinet' | 'board' | 'coffee' | 'vending' | 'table' | 'sofa' | 'hotdesk'
 export const THINGS: Record<Thing, { name: string; does: string; icon: IconName }> = {
   desk: { name: 'Desk', does: 'editing files, running commands and browsing', icon: 'pencil' },
   cabinet: { name: 'Filing cabinets', does: 'reading and searching files', icon: 'page' },
@@ -75,5 +75,6 @@ export const THINGS: Record<Thing, { name: string; does: string; icon: IconName 
   coffee: { name: 'Coffee counter', does: 'a break between tasks', icon: 'cup' },
   vending: { name: 'Vending machine', does: 'a break between tasks', icon: 'cup' },
   table: { name: 'Table', does: 'a break, or a spare seat when the desks are full', icon: 'cup' },
+  hotdesk: { name: 'Hot desks', does: 'a spare desk for anyone whose room is full', icon: 'pencil' },
   sofa: { name: 'Sofa', does: 'a break between tasks', icon: 'cup' },
 }

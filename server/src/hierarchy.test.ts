@@ -52,9 +52,9 @@ const d = (over: Partial<AgentDigest>): AgentDigest => ({
 })
 
 describe('formatDigest', () => {
-  it('says what each agent was asked, did and said, with its session id', () => {
+  it('says what each agent was asked, did and said, by name, with its session id for prompting', () => {
     const text = formatDigest([d({ asked: ['zoom out'], steps: 12, failed: 1, edited: ['camera.ts'], helpers: ['Explore the camera'], lastReply: 'Done.' })], 3 * 60_000)
-    expect(text).toContain('Agent "Fix the camera" (session s1, idle, last active 3 min ago)')
+    expect(text).toContain('Agent "Fix the camera" (idle, last active 3 min ago; session id for prompt_agent: s1)')
     expect(text).toContain('Asked: "zoom out"')
     expect(text).toContain('Did: 12 steps, 1 failed; edited camera.ts')
     expect(text).toContain('Its helpers: Explore the camera')
@@ -86,5 +86,18 @@ describe('prompts', () => {
   it('tells both to finish with the report tool', () => {
     expect(managerPrompt('HQ', '', false)).toContain('calling report once')
     expect(bossPrompt('')).toContain('calling report once')
+  })
+  it('asks for a readable report: agents by name, bullets, and what needs the user', () => {
+    for (const p of [managerPrompt('HQ', '', false), bossPrompt('')]) {
+      expect(p).toContain('never by its session id')
+      expect(p).toContain('**Needs you:**')
+      expect(p).toContain('markdown bullets')
+    }
+  })
+  it('gives a fresh session its last report, and a resumed one nothing extra', () => {
+    expect(managerPrompt('HQ', 'digest', false, undefined, 'All quiet.')).toContain('Your last report, from before this fresh session:\n\nAll quiet.')
+    expect(bossPrompt('news', 'Two projects busy.')).toContain('\nTwo projects busy.\n')
+    expect(managerPrompt('HQ', 'digest', false)).not.toContain('fresh session')
+    expect(bossPrompt('news')).not.toContain('fresh session')
   })
 })

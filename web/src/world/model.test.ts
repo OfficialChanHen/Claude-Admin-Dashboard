@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ActiveSession, LiveEvent } from '../lib/api'
 import { buildOffice } from './office'
-import { MAX_JUNIORS_PER_SESSION, OTHER, WorldModel, clip, promptText, stationFor, type Sprite } from './model'
+import { MAX_JUNIORS_PER_SESSION, OTHER, WorldModel, clip, helperName, promptText, stationFor, type Sprite } from './model'
 
 const NOW = 1_800_000_000_000
 const office = buildOffice([
@@ -42,6 +42,12 @@ function run(m: WorldModel, seconds: number, start = NOW) {
 }
 
 const at = (s: Sprite, p: { x: number; y: number }) => Math.abs(s.x - p.x) < 0.5 && Math.abs(s.y - p.y) < 0.5
+
+/** Nobody shares a spot: where each person is, or is walking to, is theirs alone. */
+function spread(m: WorldModel) {
+  const ends = [...m.sprites.values()].filter((s) => s.placed && s.activity !== 'leave').map((s) => s.path[s.path.length - 1] ?? s)
+  return ends.every((a, i) => ends.every((b, j) => i === j || Math.abs(a.x - b.x) >= 1 || Math.abs(a.y - b.y) >= 1))
+}
 
 describe('stationFor', () => {
   it.each([
@@ -95,12 +101,38 @@ describe('seniors', () => {
     expect(m.seated.size).toBe(0)
   })
 
-  it('use the hub table when every senior desk is taken', () => {
+  it('use a spare seat in the hub when every senior desk is taken, then stand', () => {
     const m = world()
-    m.sync(['s1', 's2', 's3', 's4'].map((id) => session(id, { lastAt: NOW - 5 * 60_000 })), NOW)
-    const extra = m.sprites.get('s4')!
+    const ids = Array.from({ length: 3 + office.hubSeats.length + 2 }, (_, i) => `s${i}`)
+    m.sync(ids.map((id) => session(id, { lastAt: NOW - 5 * 60_000 })), NOW)
+    const extra = m.sprites.get('s3')!
     expect(extra.slot).toBeNull()
-    expect(office.breakSpots.filter((b) => b.kind === 'table').some((b) => at(extra, b))).toBe(true)
+    expect(at(extra, office.hubSeats[0])).toBe(true)
+    expect(m.using(extra)).toEqual({ at: 'desk', active: false, task: null })
+    expect(m.deskFor(extra)).toEqual(office.hubSeats[0].desk)
+    // Past the hub's seats, they stand at the back of their own room.
+    const standing = m.sprites.get(ids[ids.length - 1])!
+    expect(standing.y).toBe(pod.aisles[pod.aisles.length - 1])
+  })
+
+  it('never share a seat, even with more people than chairs', () => {
+    const m = world()
+    const ids = Array.from({ length: 3 + office.hubSeats.length + 4 }, (_, i) => `s${i}`)
+    m.sync(ids.map((id) => session(id, { lastAt: NOW - 5 * 60_000 })), NOW)
+    run(m, 30)
+    expect(spread(m)).toBe(true)
+  })
+
+  it('move up into a seat that comes free: their own room first, then the hub', () => {
+    const m = world()
+    const ids = Array.from({ length: 3 + office.hubSeats.length + 1 }, (_, i) => `s${i}`)
+    m.sync(ids.map((id) => session(id, { lastAt: NOW - 5 * 60_000 })), NOW)
+    const [hubbed, standing] = [m.sprites.get('s3')!, m.sprites.get(ids[ids.length - 1])!]
+    m.ingest({ kind: 'session', sessionId: 's0', projectId: 'p1', state: 'ended', ts: NOW }, NOW)
+    expect(hubbed.slot).toBe(0)
+    run(m, 30)
+    expect(at(hubbed, pod.seniorSeats[0])).toBe(true)
+    expect(at(standing, office.hubSeats[0])).toBe(true)
   })
 
   it('free their desk when they leave', () => {
@@ -209,6 +241,20 @@ describe('juniors', () => {
     expect(m.hiddenCount('s1')).toBe(4)
   })
 
+  it('wait for their brief side by side, not on top of each other', () => {
+    const m = world()
+    m.sync([session('s1', { lastAt: NOW - 5 * 60_000 })], NOW)
+    for (let i = 0; i < MAX_JUNIORS_PER_SESSION; i++) m.ingest(agentStart(`j${i}`), NOW)
+    const juniors = [...m.sprites.values()].filter((s) => s.rank === 'junior')
+    let t = NOW
+    for (let i = 0; i < 600 && !juniors.every((j) => j.activity === 'brief'); i++) {
+      t += 50
+      m.tick(0.05, t)
+    }
+    expect(juniors.every((j) => j.activity === 'brief')).toBe(true)
+    expect(spread(m)).toBe(true)
+  })
+
   it('never take more desks than the area has', () => {
     const m = world()
     m.sync([session('s1', { lastAt: NOW - 5 * 60_000 }), session('s2', { lastAt: NOW - 5 * 60_000 })], NOW)
@@ -296,7 +342,8 @@ describe('reactions', () => {
   it('show no bubble for a prompt that is only editor context', () => {
     const m = world()
     m.ingest({ kind: 'prompt', sessionId: 's1', projectId: 'p1', agentId: null, text: '<ide_selection>x</ide_selection>', ts: NOW }, NOW)
-    expect(m.sprites.get('s1')!.bubble).toBeNull()
+    // At most a hello on the way in, never the prompt.
+    expect(m.sprites.get('s1')!.bubble?.chatter ?? true).toBe(true)
   })
 
   it('glance around at the desk now and then', () => {
@@ -355,10 +402,29 @@ describe('using', () => {
       m.tick(0.05, t)
     }
     expect(s.activity).toBe('break')
-    expect(['coffee', 'vending', 'table', 'sofa', 'plant']).toContain(m.using(s)?.at)
+    expect(office.breakSpots.map((b) => b.kind)).toContain(m.using(s)?.at)
     const m2 = world()
-    m2.sync(['s1', 's2', 's3', 's4'].map((id) => session(id, { lastAt: NOW - 5 * 60_000 })), NOW)
-    expect(m2.using(m2.sprites.get('s4')!)).toBeNull()
+    const ids = Array.from({ length: 3 + office.hubSeats.length + 1 }, (_, i) => `s${i}`)
+    m2.sync(ids.map((id) => session(id, { lastAt: NOW - 5 * 60_000 })), NOW)
+    // Hot desks are desks; the work table is a table; standing in the room is nothing.
+    expect(m2.using(m2.sprites.get('s3')!)?.at).toBe('desk')
+    expect(m2.using(m2.sprites.get(`s${2 + office.hubSeats.length}`)!)?.at).toBe('table')
+    expect(m2.using(m2.sprites.get(ids[ids.length - 1])!)).toBeNull()
+  })
+
+  it('never puts two people on one break spot, and keeps the rest at their desks', () => {
+    const m = world(0.1)
+    const n = office.breakSpots.length + 3
+    const ids = Array.from({ length: n }, (_, i) => `s${i}`)
+    m.sync(ids.map((id, i) => session(id, { projectId: ['p1', 'p2', OTHER][i % 3], state: 'idle', lastAt: NOW - 30_000 })), NOW)
+    let t = NOW
+    let most = 0
+    for (let i = 0; i < 40; i++) {
+      t = run(m, 1, t)
+      expect(spread(m)).toBe(true)
+      most = Math.max(most, [...m.sprites.values()].filter((s) => s.activity === 'break').length)
+    }
+    expect(most).toBe(office.breakSpots.length)
   })
 
   it('is a hand-off while a junior is briefed', () => {
@@ -465,5 +531,56 @@ describe('thinking', () => {
     m.sync([session('s1', { lastAt: NOW - 5 * 60_000 })], NOW)
     m.ingest({ kind: 'think', sessionId: 's1', projectId: 'p1', agentId: null, ts: NOW }, NOW)
     expect(m.sprites.get('s1')!.emote?.kind).toBe('idea')
+  })
+})
+
+describe('small talk', () => {
+  it('says a line now and then, quieter than real words', () => {
+    const m = world()
+    m.sync([session('s1', { lastAt: NOW - 60_000 })], NOW)
+    const s = m.sprites.get('s1')!
+    expect(s.bubble).toBeNull()
+    m.tick(0.01, s.chatAt)
+    expect(s.bubble?.chatter).toBe(true)
+    expect(s.bubble?.you).toBe(false)
+  })
+
+  it('never talks over what the session said', () => {
+    const m = world()
+    m.ingest({ kind: 'say', sessionId: 's1', projectId: 'p1', agentId: null, text: 'Done.', ts: NOW }, NOW)
+    const s = m.sprites.get('s1')!
+    s.chatAt = NOW + 1000
+    m.tick(0.01, NOW + 1000)
+    expect(s.bubble?.text).toBe('Done.')
+    expect(s.bubble?.chatter).toBe(false)
+  })
+
+  it('takes turns across the floor', () => {
+    const m = world()
+    m.sync([session('s1', { lastAt: NOW - 60_000 }), session('s2', { lastAt: NOW - 60_000 })], NOW)
+    const [a, b] = [m.sprites.get('s1')!, m.sprites.get('s2')!]
+    const t = Math.max(a.chatAt, b.chatAt)
+    m.tick(0.01, t)
+    expect([a, b].filter((s) => s.bubble).length).toBe(1)
+  })
+
+  it('stays quiet while dozing', () => {
+    const m = world()
+    m.sync([session('s1', { state: 'idle', lastAt: NOW - 10 * 60_000 })], NOW)
+    const s = m.sprites.get('s1')!
+    s.lastAt = NOW - 5 * 60_000
+    m.tick(0.01, s.chatAt)
+    expect(m.asleep(s, s.chatAt)).toBe(true)
+    expect(s.bubble).toBeNull()
+  })
+})
+
+describe('helperName', () => {
+  it('calls a helper by its task, or else by a readable kind', () => {
+    expect(helperName('Commit and push office world', 'general-purpose')).toBe('Commit and push office world')
+    expect(helperName(null, 'general-purpose')).toBe('Helper')
+    expect(helperName('  ', 'Explore')).toBe('Explorer')
+    expect(helperName(null, 'code-reviewer')).toBe('Code reviewer')
+    expect(helperName(null, null)).toBe('Helper')
   })
 })

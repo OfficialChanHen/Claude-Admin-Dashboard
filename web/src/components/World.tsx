@@ -1,9 +1,10 @@
 import { useEffect, useRef, type MutableRefObject } from 'react'
-import type { Project } from '../lib/api'
+import type { Preview, Project } from '../lib/api'
 import { keep, kept } from '../lib/keep'
 import { Camera } from '../world/camera'
 import { areaAt, buildOffice, neighbor, roomBounds, roomById, type Area, type Facing, type Office } from '../world/office'
 import { OTHER, type Sprite, type WorldModel } from '../world/model'
+import type { Extras } from '../world/extras'
 import { doorAt, drawBackground, drawFrame, hitTest, loadSheets, readPalette, sameHit, type Frame, type FrameUi, type Hit, type Sheets } from '../world/render'
 
 const FRAME_MS = 1000 / 30
@@ -27,6 +28,8 @@ export type DoorDrop = { key: string; sessionId: string; label: string; x: numbe
 
 export function World({
   model,
+  extras,
+  previews,
   projects,
   focus,
   room,
@@ -40,6 +43,9 @@ export function World({
   control,
 }: {
   model: WorldModel
+  /** Visitors, parcels, the cat and the weather. */
+  extras: Extras
+  previews: Map<string, Preview>
   projects: Project[]
   focus: string | null
   /** The room you are in, or null to see the whole floor. */
@@ -57,8 +63,8 @@ export function World({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // The loop reads the latest props through a ref, so it never restarts.
-  const props = useRef({ projects, focus, room, selected, limits, connected, loading, onHit, onRoom, onDoorDrop })
-  props.current = { projects, focus, room, selected, limits, connected, loading, onHit, onRoom, onDoorDrop }
+  const props = useRef({ projects, focus, room, selected, limits, connected, loading, previews, onHit, onRoom, onDoorDrop })
+  props.current = { projects, focus, room, selected, limits, connected, loading, previews, onHit, onRoom, onDoorDrop }
 
   useEffect(() => {
     const canvas = canvasRef.current!
@@ -147,7 +153,7 @@ export function World({
         }
       }
       if (bgStale && office && sheets) {
-        bg = drawBackground(office, pal, sheets)
+        bg = drawBackground(office, sheets)
         bgStale = false
       }
       applyRoom()
@@ -177,6 +183,8 @@ export function World({
       last = t
       try {
         model.tick(dt)
+        extras.tick(dt, model)
+        extras.weather.update(props.current.limits.fiveHour, Date.now())
         cam.step(dt)
         if (t - lastDraw < FRAME_MS) return
         lastDraw = t
@@ -185,7 +193,7 @@ export function World({
           const p = props.current
           frame = drawFrame(bctx, cam, dpr, office, pal, model, bg, sheets, Date.now(), {
             hover, focus: p.focus, room: inRoom, selected: p.selected, carrying: carrying?.key ?? null,
-            limits: p.limits, connected: p.connected, loading: p.loading,
+            limits: p.limits, connected: p.connected, loading: p.loading, extras, previews: p.previews,
           })
           ctx.drawImage(buf, 0, 0)
           if (broken) console.info('[HQ] The office is drawing again.')
@@ -200,7 +208,7 @@ export function World({
     }
     raf = requestAnimationFrame(loop)
     // Lets browser tests find things on the floor. Dev builds only.
-    if (import.meta.env.DEV) (window as unknown as { __hqWorld: unknown }).__hqWorld = { cam, model, office: () => office, dpr: () => dpr }
+    if (import.meta.env.DEV) (window as unknown as { __hqWorld: unknown }).__hqWorld = { cam, model, extras, office: () => office, dpr: () => dpr }
 
     control.current = {
       roomOf: (id) => {
@@ -353,7 +361,7 @@ export function World({
       if (carrying) model.putDown(carrying)
       control.current = null
     }
-  }, [model, control])
+  }, [model, extras, control])
 
   return (
     <canvas

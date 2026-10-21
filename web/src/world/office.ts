@@ -14,6 +14,9 @@ export const EDGE = 2 // aisle tiles along the left
 export const ROOM_WALL = 3 // art px: how thick each room's walls are
 export const ROOM_FACE = 14 // art px: the back wall of a room, seen from the front, tall enough to hang things on
 export const FIXTURE_H = 10 // art px: name plates, clocks and boards hung on a back wall
+export const CAP = 5 // art px: the top of the building's outer walls, seen from above
+export const FACADE = 32 // art px: the front of the building, seen from the street
+export const FRONT = CAP + FACADE // art px: the whole front wall, top and face
 export const HUB = '_hub'
 
 export type Sheet = 'indoor' | 'urban'
@@ -111,10 +114,15 @@ export function looksFor(ids: string[]): Look[] {
 export type FacilityKey = 'reception' | 'accounts' | 'archive' | 'clock' | 'limits' | 'notice' | 'lights'
 export type Facility = { key: FacilityKey; label: string; rect: Rect; stand: Point }
 
-export type BreakSpot = Point & { kind: 'coffee' | 'vending' | 'table' | 'sofa' | 'window' | 'plant'; face: Facing }
+export type BreakSpot = Point & {
+  kind: 'coffee' | 'vending' | 'table' | 'sofa' | 'window' | 'plant' | 'printer' | 'archive' | 'stretch' | 'phone'
+  face: Facing
+}
 export type Facing = 'up' | 'down' | 'left' | 'right'
+/** A spare place to work in the hub, for people whose room has no free desk: a hot desk or a seat at the work table. */
+export type HubSeat = Point & { kind: 'hotdesk' | 'table'; face: Facing; desk: Rect }
 /** The break furniture in the hub, for tooltips. */
-export type Lounge = { thing: 'coffee' | 'vending' | 'table' | 'sofa'; rect: Rect }
+export type Lounge = { thing: 'coffee' | 'vending' | 'table' | 'sofa' | 'hotdesk'; rect: Rect }
 
 export type Office = {
   w: number // art px
@@ -124,11 +132,14 @@ export type Office = {
   hub: Area
   facilities: Facility[]
   breakSpots: BreakSpot[]
+  hubSeats: HubSeat[]
   lounge: Lounge[]
-  /** Where people come in and leave: just inside the entrance. */
+  /** Where people come in and leave: on the sidewalk, just outside the front door. */
   door: Point
-  /** The entrance in the back wall, with its lamp above. */
+  /** The front door: an opening in the front wall onto the street, with its lamp above. */
   entrance: Rect
+  /** Windows in the front of the building; lit from inside at night. */
+  frontWindows: Rect[]
   /** The office sign on the back wall. */
   sign: Rect
   /** Windows in the back wall; the sky in them follows the time of day. */
@@ -158,6 +169,8 @@ const t = (n: number) => n * TILE
 const AISLE_ROWS = [1, 4, 7]
 const SENIOR_COLS = [1, 4, 7] // each desk is two tiles wide
 const JUNIOR_COLS = [1, 3, 5, 7]
+
+const HOT_DESK_COLS = [4, 5, 6] // in the hub, one tile each
 
 export const SENIOR_SLOTS = SENIOR_COLS.length
 export const JUNIOR_SLOTS = JUNIOR_COLS.length
@@ -258,7 +271,9 @@ export function buildOffice(infos: PodInfo[]): Office {
     }
   })
 
-  // The hub: break area on the left, office services on the right.
+  // The hub: break area on the left, spare seats in the middle, office services
+  // on the right. Rows 0 to 7 as in an area: row 0 counters and cabinets, rows
+  // 2-3 the tables, rows 5-6 the hot desks and the sofa, with aisles between.
   const hub = area(HUB, 'hub', 'Hub', hubCell)
   const { x: hx, y: hy } = hub.rect
   put('indoor', 5, 12, hx, hy)
@@ -282,6 +297,20 @@ export function buildOffice(infos: PodInfo[]): Office {
   put('indoor', 1, 8, hx + t(7) + 8, hy + t(6))
   monitors.push({ x: hx + t(8) - 5, y: hy + t(5) - 3 })
   put('indoor', 17, 0, hx + t(9), hy + t(2))
+  // Spare seats for people whose room is full: a work table and a row of hot desks.
+  put('indoor', 0, 2, hx + t(4), hy + t(2))
+  put('indoor', 0, 2, hx + t(5), hy + t(2))
+  put('indoor', 3, 0, hx + t(4), hy + t(3))
+  put('indoor', 4, 0, hx + t(5), hy + t(3)) // work table
+  const workTable = { x: hx + t(4), y: hy + t(3), w: t(2), h: t(1) }
+  const hubSeats: HubSeat[] = []
+  for (const c of HOT_DESK_COLS) {
+    put('indoor', 5, 4, hx + t(c), hy + t(5))
+    put('indoor', 1, 8, hx + t(c), hy + t(6))
+    monitors.push({ x: hx + t(c) + 3, y: hy + t(5) - 2 })
+    hubSeats.push({ kind: 'hotdesk', x: hx + t(c) + 8, y: hy + t(6) + 13, face: 'up', desk: { x: hx + t(c), y: hy + t(5), w: t(1), h: t(1) } })
+  }
+  for (const c of [4, 5]) hubSeats.push({ kind: 'table', x: hx + t(c) + 8, y: hy + t(2) + 13, face: 'down', desk: workTable })
 
   const facilities: Facility[] = [
     { key: 'reception', label: 'Reception', rect: { x: hx + t(6), y: hy + t(2), w: t(3), h: t(2) }, stand: { x: hx + t(7) + 8, y: hub.aisles[1] } },
@@ -302,37 +331,56 @@ export function buildOffice(infos: PodInfo[]): Office {
     { kind: 'vending', x: hx + t(3) + 8, y: hub.aisles[0], face: 'up' },
     { kind: 'table', x: hx + t(1) + 8, y: hy + t(2) + 13, face: 'down' },
     { kind: 'table', x: hx + t(2) + 8, y: hy + t(2) + 13, face: 'down' },
-    { kind: 'sofa', x: hx + t(1), y: hy + t(6) + 12, face: 'down' },
-    { kind: 'sofa', x: hx + t(2) + 8, y: hy + t(6) + 12, face: 'down' },
+    ...[0, 1, 2, 3].map((i): BreakSpot => ({ kind: 'sofa', x: hx + t(i) + 8, y: hy + t(6) + 12, face: 'down' })),
     { kind: 'plant', x: hx + t(4) + 8, y: hub.aisles[0], face: 'up' },
+    // Leafing through the archive, and fetching a printout.
+    { kind: 'archive', x: hx + t(6) + 8, y: hub.aisles[0], face: 'up' },
+    { kind: 'archive', x: hx + t(9), y: hub.aisles[0], face: 'up' },
+    { kind: 'printer', x: hx + t(9) + 8, y: hy + t(6) + 12, face: 'up' },
+    // The open floor above the sofa: stretching, and pacing on a call. One more call between the tables.
+    { kind: 'stretch', x: hx + 8, y: hy + t(5) + 12, face: 'down' },
+    { kind: 'stretch', x: hx + t(1) + 12, y: hy + t(5) + 12, face: 'down' },
+    { kind: 'phone', x: hx + t(3), y: hy + t(5) + 12, face: 'down' },
+    { kind: 'phone', x: hx + t(3) + 8, y: hy + t(2) + 12, face: 'down' },
   ]
 
   const lounge: Lounge[] = [
     { thing: 'coffee', rect: { x: hx, y: hy, w: t(3), h: t(1) } },
     { thing: 'vending', rect: { x: hx + t(3), y: hy, w: t(1), h: t(1) } },
     { thing: 'table', rect: { x: hx + t(1), y: hy + t(2), w: t(2), h: t(2) } },
+    { thing: 'table', rect: { x: hx + t(4), y: hy + t(2), w: t(2), h: t(2) } },
     { thing: 'sofa', rect: { x: hx, y: hy + t(6), w: t(4), h: t(1) } },
+    { thing: 'hotdesk', rect: { x: hx + t(HOT_DESK_COLS[0]), y: hy + t(5), w: t(HOT_DESK_COLS.length), h: t(2) } },
   ]
 
+  // Two tiles of corridor below the last row, then the front wall.
   const w = t(EDGE + grid.cols * CELL_W)
-  const h = t(WALL + grid.rows * CELL_H + 1)
+  const h = t(WALL + grid.rows * CELL_H + 2)
   const corridorXs = [t(EDGE) / 2, ...Array.from({ length: grid.cols }, (_, c) => t(EDGE + c * CELL_W + POD_W) + t(GAP) / 2)]
   const corridorYs = Array.from({ length: grid.rows }, (_, r) => t(WALL + r * CELL_H + POD_H) + t(GAP) / 2)
 
-  // The entrance is in the back wall at the top of the hub's corridor, with the
-  // light switch beside it and the office sign over the hub's column.
-  const entrance = { x: hub.exitX - 9, y: t(WALL) - 26, w: 18, h: 26 }
-  const door = { x: hub.exitX, y: t(WALL) + 6 }
-  facilities.push({ key: 'lights', label: 'Light switch', rect: { x: entrance.x + entrance.w + 4, y: 14, w: 6, h: 9 }, stand: door })
-  const sign = { x: hx + 16, y: 3, w: t(POD_W) - 32, h: 13 }
-  const clear = (r: Rect) => [sign, { ...entrance, x: entrance.x - 4, w: entrance.w + 18 }].every((o) => !(r.x < o.x + o.w && o.x < r.x + r.w))
+  // The front door opens onto the street at the foot of the hub's corridor, so
+  // people walk in off the sidewalk. The light switch is on the back wall at the
+  // top of the same corridor, and the office sign is over the hub's column.
+  const entrance = { x: hub.exitX - t(GAP) / 2, y: h - FRONT, w: t(GAP), h: FRONT }
+  const door = { x: hub.exitX, y: h + 7 }
+  const lights = { x: hub.exitX - 3, y: 8, w: 6, h: 9 }
+  facilities.push({ key: 'lights', label: 'Light switch', rect: lights, stand: { x: hub.exitX, y: t(WALL) + 6 } })
+  const sign = { x: hx + 16, y: CAP + 1, w: t(POD_W) - 32, h: 12 }
+  const apart = (r: Rect, others: Rect[]) => others.every((o) => !(r.x < o.x + o.w && o.x < r.x + r.w))
   const windows: Rect[] = []
   for (let x = t(2); x + t(2) <= w - t(1); x += t(6)) {
-    const r = { x, y: 3, w: t(2), h: 14 }
-    if (clear(r)) windows.push(r)
+    const r = { x, y: CAP + 1, w: t(2), h: 12 }
+    if (apart(r, [sign, { ...lights, x: lights.x - 8, w: lights.w + 16 }])) windows.push(r)
+  }
+  const frontWindows: Rect[] = []
+  for (let x = t(1) + 8; x + t(2) <= w - t(1); x += t(4)) {
+    const r = { x, y: h - FACADE + 8, w: t(2), h: 14 }
+    // Room right of the door for the lamp.
+    if (apart(r, [{ ...entrance, x: entrance.x - 8, w: entrance.w + 32 }])) frontWindows.push(r)
   }
   const receptionist = { x: hx + t(7) + 8, y: hy + t(2) + 13 }
-  return { w, h, grid, pods, hub, facilities, breakSpots, lounge, door, entrance, sign, windows, receptionist, corridorXs, corridorYs, props, monitors }
+  return { w, h, grid, pods, hub, facilities, breakSpots, hubSeats, lounge, door, entrance, frontWindows, sign, windows, receptionist, corridorXs, corridorYs, props, monitors }
 }
 
 /** The top of the strip of back wall where a room's plates and clocks hang. Top-row rooms use the office wall. */

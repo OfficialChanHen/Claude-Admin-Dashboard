@@ -3,13 +3,17 @@ import urbanUrl from '../assets/kenney/urban.png'
 import cityUrl from '../assets/kenney/city.png'
 import type { Camera } from './camera'
 import {
-  ROOM_FACE, ROOM_WALL, TILE, WALL, outerRect, roomShell, rooms,
+  CAP, FACADE, FRONT, ROOM_FACE, ROOM_WALL, TILE, WALL, outerRect, roomShell, rooms,
   type Area, type Facing, type FacilityKey, type FloorKind, type Office, type Pod, type Rect, type Sheet,
 } from './office'
 import { BRIEF_MS, REPORT_MS, type Emote, type Sprite, type Use, type WorldModel } from './model'
 import { TASKS, taskLabel, taskOf, type TaskKind, type Thing } from './tasks'
 import { iconCells, type IconName } from '../lib/pixelIcons'
+import { isDark } from '../lib/theme'
 import { carsIn, groundAt, hash, propAt, walkersIn, ROAD, WALK, type CarDir, type Prop as StreetProp } from './street'
+import { CLERK, COURIER, carHidden, drawDramaFx, drawNpcs, drawOutside, drawRoomExtras, drawWindowWeather } from './extrasRender'
+import { tvRect, type Extras } from './extras'
+import type { Preview } from '../lib/api'
 
 // Draws the office from Kenney's Roguelike Indoors and RPG Urban packs (CC0).
 // The floor, walls and furniture are drawn once at art size and scaled up by
@@ -56,6 +60,8 @@ export function isGreyHair(r: number, g: number, b: number, a: number) {
 const RANKS: { from: number; to: number; swap: Record<string, string> }[] = [
   { from: 12, to: 18, swap: { '#898ca6': '#3e8a5c', '#aaa8bd': '#62b07c' } }, // manager
   { from: 15, to: 21, swap: { '#ff7143': '#f2c14e' } }, // boss
+  { from: 0, to: COURIER, swap: { '#42a379': '#8a5a33', '#369069': '#6e4626', '#d6d4aa': '#a8774a', '#c5b993': '#8f633b' } }, // courier, all in brown
+  { from: 3, to: CLERK, swap: { '#c2504d': '#4a78c0', '#a54240': '#3a5f9a', '#a09cca': '#3b4a75', '#7a77a4': '#2e3a5c' } }, // mail clerk, in postal blue
 ]
 export const MANAGER = 18
 export const BOSS = 21
@@ -111,7 +117,7 @@ function youngPeople(img: HTMLImageElement) {
 const TOKENS = [
   'panel', 'panel-2', 'line', 'line-strong', 'text', 'text-2', 'text-3', 'accent', 'accent-bg', 'accent-text', 'turn', 'turn-bg', 'bad',
   'ok', 'ok-bg', 'warn', 'warn-bg',
-  'w-night', 'w-shadow', 'w-void',
+  'w-shadow', 'w-void',
 ] as const
 export type Palette = Record<(typeof TOKENS)[number], string>
 
@@ -122,8 +128,29 @@ export function readPalette(): Palette {
   return p
 }
 
-/** Night is on when the theme tints the scenery. */
-export const isNight = (pal: Palette) => pal['w-night'] !== 'transparent'
+/**
+ * How dark it is outside at an hour of the day, from 0 (full day) to 1 (night),
+ * following the sky in the windows: dawn from 5 to 7, dusk from 17 to 21.
+ * The office's lighting follows the clock, not the app's theme.
+ */
+export function darkness(hour: number) {
+  const h = ((hour % 24) + 24) % 24
+  const ramp = (from: number, to: number, a: number, b: number) => a + ((h - from) / (to - from)) * (b - a)
+  if (h < 5) return 1
+  if (h < 7) return ramp(5, 7, 1, 0)
+  if (h < 17) return 0
+  if (h < 19) return ramp(17, 19, 0, 0.6)
+  if (h < 21) return ramp(19, 21, 0.6, 1)
+  return 1
+}
+
+/** From this dark on, lamps, lit windows and screens glow. */
+export const LAMPS_ON = 0.5
+
+/** The blue tint over the scenery at a darkness; people, lamps and lit screens stay bright. */
+export const nightTint = (k: number) => `rgba(10, 16, 48, ${(0.42 * k).toFixed(3)})`
+
+const hourOf = (d: Date) => d.getHours() + d.getMinutes() / 60
 
 function blit(ctx: CanvasRenderingContext2D, sheets: Sheets, sheet: Sheet, c: number, r: number, dx: number, dy: number, P: number) {
   const g = GAP[sheet]
@@ -251,6 +278,8 @@ function drawFloor(ctx: CanvasRenderingContext2D, p: Pod) {
   }
 }
 
+const ROOM_LIP = 5 // art px of a room's bottom wall seen from the front
+
 /** A room's walls: a back wall seen from the front, wall tops on the other sides, and a doorway at the end of each aisle. */
 function drawWalls(ctx: CanvasRenderingContext2D, a: Area) {
   const { x, y, w, h } = a.rect
@@ -272,6 +301,10 @@ function drawWalls(ctx: CanvasRenderingContext2D, a: Area) {
   } else top(o.x, o.y, o.w, ROOM_WALL)
   top(o.x, y, ROOM_WALL, h + ROOM_WALL)
   top(o.x, y + h, o.w, ROOM_WALL)
+  // The front of the bottom wall, seen from the corridor, so the walls have height.
+  fill(o.x, y + h + ROOM_WALL, o.w, ROOM_LIP, ART.wall)
+  fill(o.x, y + h + ROOM_WALL + ROOM_LIP - 2, o.w, 1, ART.wallTrim)
+  fill(o.x, y + h + ROOM_WALL + ROOM_LIP - 1, o.w, 1, ART.outline)
   let from = y
   for (const d of [...a.doors].sort((p, q) => p.y - q.y)) {
     top(x + w, from, ROOM_WALL, d.y - from)
@@ -338,37 +371,89 @@ function drawNotice(f: Fill, r: Rect) {
   }
 }
 
-/** The entrance in the back wall: a frame, two glass doors and a mat on the floor. */
-function drawEntrance(f: Fill, office: Office) {
+// Red brick for the front of the building, from the city sheet: the left end,
+// the middle and the right end of a wall, top and bottom rows (16 by 16 each).
+const BRICK = { cols: [16, 32, 48], top: 80, bottom: 128 }
+// The green awning: its left and right ends, its top edge and its scalloped hem.
+const AWNING = { left: 368, right: 416, edge: 148, hem: 160 }
+
+/**
+ * The building's shell, seen from above and a little in front like the street:
+ * the tops of the outer walls on every side, and the front of the building in
+ * brick, with the front door open onto the sidewalk.
+ */
+function drawShell(ctx: CanvasRenderingContext2D, f: Fill, office: Office, city: CanvasImageSource) {
+  const { w, h } = office
   const e = office.entrance
-  f(e.x - 1, e.y - 6, e.w + 2, 6, ART.outline) // the lamp's housing; lit each frame
-  f(e.x, e.y, e.w, e.h, ART.outline)
-  f(e.x + 1, e.y + 1, e.w - 2, e.h - 1, ART.wallTrim)
-  const gx = e.x + 3
-  const gy = e.y + 3
-  const gw = e.w - 6
-  const gh = e.h - 3
-  f(gx, gy, gw, gh, ART.glass)
-  f(gx + gw / 2, gy, 1, gh, ART.outline) // the doors meet
-  for (let i = 0; i < 4; i++) f(gx + 1 + i, gy + 2 + i, 1, 1, ART.glassHi) // a glint on the glass
-  f(gx + gw / 2 - 2, gy + 11, 1, 3, ART.brass)
-  f(gx + gw / 2 + 2, gy + 11, 1, 3, ART.brass)
-  const m = { x: office.door.x - 10, y: WALL * TILE, w: 20, h: 7 }
+  const face = h - FACADE
+  const capTop = (x: number, y: number, cw: number, ch: number) => {
+    if (cw <= 0 || ch <= 0) return
+    f(x, y, cw, ch, ART.outline)
+    f(x + 1, y + 1, cw - 2, ch - 2, ART.wallTrim)
+    f(x + 1, y + 1, cw - 2, 1, ART.wall)
+  }
+  // Wall tops along the back and both sides, and along the front either side of the door.
+  capTop(0, 0, w, CAP)
+  capTop(0, 0, CAP, face)
+  capTop(w - CAP, 0, CAP, face)
+  capTop(0, h - FRONT, e.x + 1, CAP)
+  capTop(e.x + e.w - 1, h - FRONT, w - e.x - e.w + 1, CAP)
+
+  // The brick front, with a finished end at each corner and either side of the door.
+  for (let x = 0; x < w; x += TILE) {
+    if (x >= e.x && x < e.x + e.w) continue
+    const end = x === 0 || x === e.x + e.w ? 0 : x + TILE === w || x + TILE === e.x ? 2 : 1
+    const sx = BRICK.cols[end]
+    ctx.drawImage(city, sx, BRICK.top, TILE, TILE, x, face, TILE, TILE)
+    ctx.drawImage(city, sx, BRICK.bottom, TILE, TILE, x, face + TILE, TILE, TILE)
+  }
+  f(0, face, w, 1, ART.outline)
+
+  // The front door: posts, glass doors slid open into the wall, and a mat on
+  // the step. The lamp beside it is lit each frame.
+  const lintel = 7
+  for (const px of [e.x, e.x + e.w - 3]) {
+    f(px, face, 3, FACADE, ART.outline)
+    f(px + 1, face + lintel, 1, FACADE - lintel, ART.wallTrim)
+  }
+  for (const gx of [e.x + 3, e.x + e.w - 6]) {
+    f(gx, face + lintel, 3, FACADE - lintel, ART.glass)
+    f(gx + 1, face + lintel + 2, 1, 4, ART.glassHi)
+  }
+  const m = { x: e.x + 7, y: h - 9, w: e.w - 14, h: 8 }
   f(m.x, m.y, m.w, m.h, ART.outline)
-  f(m.x + 1, m.y, m.w - 2, m.h - 1, ART.mat)
-  for (let x = m.x + 3; x < m.x + m.w - 2; x += 3) f(x, m.y + 2, 1, 2, '#7a2c2c')
+  f(m.x + 1, m.y + 1, m.w - 2, m.h - 2, ART.mat)
+  for (let x = m.x + 3; x < m.x + m.w - 2; x += 3) f(x, m.y + 3, 1, 2, '#7a2c2c')
+
+  // A striped awning over the door: its top edge, then the stripes down to the scalloped hem.
+  const ay = face - 6
+  for (const [sx, dx] of [[AWNING.left, e.x], [AWNING.right, e.x + TILE]]) {
+    ctx.drawImage(city, sx, AWNING.edge, TILE, 4, dx, ay, TILE, 4)
+    ctx.drawImage(city, sx, AWNING.hem, TILE, TILE, dx, ay + 4, TILE, TILE)
+  }
 }
 
-function drawSwitch(f: Fill, r: Rect, night: boolean) {
+/** A window in the front of the building: sky reflected by day, lit from inside at night. */
+function drawFrontWindow(rect: Fill, r: Rect, night: boolean) {
+  rect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, ART.outline)
+  rect(r.x, r.y, r.w, r.h, night ? '#f2d27a' : ART.glass)
+  if (night) rect(r.x, r.y + r.h - 4, r.w, 4, '#e0b040')
+  else for (let i = 0; i < 5; i++) rect(r.x + 3 + i, r.y + 7 - i, 2, 1, ART.glassHi) // a glint on the glass
+  rect(r.x + r.w / 2, r.y, 1, r.h, ART.outline)
+  rect(r.x - 2, r.y + r.h + 1, r.w + 4, 2, ART.wallTrim) // the sill
+  rect(r.x - 2, r.y + r.h + 3, r.w + 4, 1, ART.outline)
+}
+
+function drawSwitch(f: Fill, r: Rect, dark: boolean) {
   f(r.x, r.y, r.w, r.h, ART.outline)
   f(r.x + 1, r.y + 1, r.w - 2, r.h - 2, ART.paper)
   f(r.x + 2, r.y + 2, r.w - 4, r.h - 4, ART.wallTrim)
-  // The rocker is up for day, down for night.
-  f(r.x + 2, night ? r.y + r.h - 4 : r.y + 2, r.w - 4, 2, ART.outline)
+  // The rocker is up for the light theme, down for the dark one.
+  f(r.x + 2, dark ? r.y + r.h - 4 : r.y + 2, r.w - 4, 2, ART.outline)
 }
 
 /** The floor, walls, furniture and wall fixtures, at one device pixel per art pixel. */
-export function drawBackground(office: Office, pal: Palette, sheets: Sheets) {
+export function drawBackground(office: Office, sheets: Sheets) {
   const cv = document.createElement('canvas')
   cv.width = office.w
   cv.height = office.h
@@ -384,12 +469,12 @@ export function drawBackground(office: Office, pal: Palette, sheets: Sheets) {
   fill(0, 0, office.w, WALL * TILE, ART.wall)
   fill(0, WALL * TILE - 3, office.w, 2, ART.wallTrim)
   fill(0, WALL * TILE - 1, office.w, 1, ART.outline)
-  drawEntrance(fill, office)
   drawSign(fill, office.sign)
 
   // Each area has its own floor, so areas are easy to tell apart, and walls, so each is a room.
   for (const p of office.pods) drawFloor(ctx, p)
   for (const a of rooms(office)) drawWalls(ctx, a)
+  drawShell(ctx, fill, office, sheets.city)
   for (const pr of office.props) blit(ctx, sheets, pr.sheet, pr.c, pr.r, pr.x, pr.y, 1)
   for (const m of office.monitors) {
     fill(m.x, m.y, 10, 8, ART.outline)
@@ -402,11 +487,9 @@ export function drawBackground(office: Office, pal: Palette, sheets: Sheets) {
   }
   for (const f of office.facilities) {
     if (f.key === 'notice') drawNotice(fill, f.rect)
-    if (f.key === 'lights') drawSwitch(fill, f.rect, isNight(pal))
+    // The switch flips the app between its light and dark theme.
+    if (f.key === 'lights') drawSwitch(fill, f.rect, isDark())
   }
-  // Night dims the room; people, lamps and lit screens stay bright.
-  ctx.fillStyle = pal['w-night']
-  ctx.fillRect(0, 0, cv.width, cv.height)
   return cv
 }
 
@@ -476,7 +559,7 @@ function inRoad(t: number, n: number) {
  * The city block around the office when you zoom out: sidewalks, roads with
  * cars, people out walking, a park with trees and lamps that light up at night.
  */
-function drawSurround(ctx: CanvasRenderingContext2D, cam: Camera, pal: Palette, sheets: Sheets, office: Office, now: number) {
+function drawSurround(ctx: CanvasRenderingContext2D, cam: Camera, pal: Palette, sheets: Sheets, office: Office, now: number, dark: number, extras?: Extras) {
   const P = cam.P
   const o = cam.origin()
   const tl = cam.toWorld(0, 0)
@@ -538,15 +621,23 @@ function drawSurround(ctx: CanvasRenderingContext2D, cam: Camera, pal: Palette, 
       } else put(CITY.grass[hash(tx, ty, 8) < 0.5 ? 0 : 1], x, y)
       const p = propAt(tx, ty, cols, rows)
       if (!p) continue
+      // Keep the step outside the front door clear.
+      if (ty === rows && Math.abs(p.x - office.door.x) < TILE * 1.5) continue
       const b = streetBox(p)
       if (p.kind === 'lamp') lamps.push(p)
       things.push({ y: p.y, draw: () => put(b, p.x - b[2] / 2, p.y - b[3] + 1, p.flip) })
     }
   }
 
+  // The building's shadow on the sidewalk, with the light from the top left.
+  const shade = 6
+  fill(office.w, shade, shade, office.h, pal['w-shadow'])
+  fill(shade, office.h, office.w - shade, 3, pal['w-shadow'])
+
   // Traffic and people, sorted with the props so nearer things stand in front.
   const view = { x: tl.x - TILE, y: tl.y - TILE, w: br.x - tl.x + 2 * TILE, h: br.y - tl.y + 2 * TILE }
   for (const c of carsIn(view, office.w, office.h, now)) {
+    if (carHidden(extras, office, c)) continue
     const b = carBox(c.dir, c.color)
     things.push({ y: c.y + b[3] / 2, draw: () => put(b, c.x - b[2] / 2, c.y - b[3] / 2) })
   }
@@ -560,9 +651,11 @@ function drawSurround(ctx: CanvasRenderingContext2D, cam: Camera, pal: Palette, 
   things.sort((a, b) => a.y - b.y)
   for (const t of things) t.draw()
 
-  ctx.fillStyle = pal['w-night']
-  ctx.fillRect(0, 0, cam.vw, cam.vh)
-  if (isNight(pal)) {
+  if (dark > 0) {
+    ctx.fillStyle = nightTint(dark)
+    ctx.fillRect(0, 0, cam.vw, cam.vh)
+  }
+  if (dark >= LAMPS_ON) {
     // Street lamps throw a warm pool of light at night.
     for (const l of lamps) {
       const c = cam.toScreen(l.x + (l.flip ? 3 : -3), l.y - 22)
@@ -632,6 +725,9 @@ export type Hit =
   | { kind: 'plaque'; podId: string; label: string }
   | { kind: 'board'; podId: string; label: string }
   | { kind: 'clipboard'; podId: string; label: string }
+  /** The TV on a room's back wall: its dev server and live site. */
+  | { kind: 'tv'; podId: string; label: string }
+  | { kind: 'cat'; label: string }
 
 export type Box = { x: number; y: number; w: number; h: number }
 export type Frame = { sprites: (Box & { s: Sprite })[]; plaques: (Box & { hit: Hit })[]; asks: (Box & { s: Sprite })[] }
@@ -642,6 +738,7 @@ export function sameHit(a: Hit | null, b: Hit | null) {
   if (!a || !b || a.kind !== b.kind) return false
   if (a.kind === 'sprite' || a.kind === 'ask') return b.kind === a.kind && b.sessionId === a.sessionId
   if (a.kind === 'facility') return b.kind === 'facility' && a.key === b.key
+  if (a.kind === 'cat') return true
   if (a.kind === 'hub') return thingKey(a) === thingKey(b)
   return 'podId' in b && a.podId === b.podId && thingKey(a) === thingKey(b)
 }
@@ -652,6 +749,10 @@ export function hitRect(office: Office, hit: Hit): Rect | null {
   if (hit.kind === 'board' || hit.kind === 'plaque' || hit.kind === 'clipboard') {
     const p = office.pods.find((x) => x.id === hit.podId)
     return p ? (hit.kind === 'board' ? p.boardRect : hit.kind === 'clipboard' ? p.clipboard : p.plate) : null
+  }
+  if (hit.kind === 'tv') {
+    const p = office.pods.find((x) => x.id === hit.podId)
+    return p ? tvRect(p) : null
   }
   if (hit.kind === 'pod' || hit.kind === 'hub') return hit.rect ?? null
   return null
@@ -794,7 +895,7 @@ export function skyAt(hour: number): { top: string; bottom: string; stars: boole
 }
 
 function drawWindow(rect: Fill, w: Rect, d: Date, now: number, i: number) {
-  const sky = skyAt(d.getHours() + d.getMinutes() / 60)
+  const sky = skyAt(hourOf(d))
   rect(w.x, w.y, w.w, w.h, ART.outline)
   const ix = w.x + 1
   const iy = w.y + 1
@@ -847,6 +948,10 @@ export type FrameUi = {
   connected: boolean
   /** While past logs are being read: how far along, from 0 to 1. */
   loading: number | null
+  /** What happens around the staff: visitors, parcels, test lamps, the cat and the weather. */
+  extras?: Extras
+  /** Each project's dev server and live site, for the TVs. */
+  previews?: Map<string, Preview>
 }
 
 export function drawFrame(
@@ -863,11 +968,18 @@ export function drawFrame(
 ): Frame {
   const P = cam.P
   const o = cam.origin()
-  const night = isNight(pal)
   const date = new Date(now)
+  const dark = darkness(hourOf(date))
+  const night = dark >= LAMPS_ON
   ctx.imageSmoothingEnabled = false
-  drawSurround(ctx, cam, pal, sheets, office, now)
+  drawSurround(ctx, cam, pal, sheets, office, now, dark, ui.extras)
+  if (ui.extras) drawOutside(ctx, cam, office, ui.extras, now)
   ctx.drawImage(bg, o.x, o.y, bg.width * P, bg.height * P)
+  // Evening dims the room with the street; people, lamps and lit screens stay bright.
+  if (dark > 0) {
+    ctx.fillStyle = nightTint(dark)
+    ctx.fillRect(o.x, o.y, bg.width * P, bg.height * P)
+  }
 
   const rect: Fill = (x, y, w, h, c) => {
     ctx.fillStyle = c
@@ -883,10 +995,11 @@ export function drawFrame(
   /** Lettering on a sign or plate, sized with the room so it zooms with everything else. */
   const letter = (text: string, r: Rect, color: string, sizeArt: number, align: 'center' | 'left' | 'right' = 'center') => {
     if (!visible(r)) return
-    let size = Math.round(sizeArt * P)
-    if (size < 7) return
+    if (Math.round(sizeArt * P) < 7) return
+    // Jersey 15 runs small for its size, so it is set a third larger.
+    let size = Math.round(sizeArt * P * 1.3)
     const maxW = r.w * P
-    const setFont = () => (ctx.font = `500 ${size}px 'Pixelify Sans', 'Inter Variable', system-ui, sans-serif`)
+    const setFont = () => (ctx.font = `400 ${size}px 'Jersey 15', 'Inter Variable', system-ui, sans-serif`)
     setFont()
     let s = text
     let w = ctx.measureText(s).width
@@ -930,6 +1043,8 @@ export function drawFrame(
   office.windows.forEach((w, i) => {
     if (visible(w)) drawWindow(rect, w, date, now, i)
   })
+  // The weather in the windows is darker once their sky has gone dark.
+  if (ui.extras) drawWindowWeather(ctx, cam, office, ui.extras, now, skyAt(hourOf(date)).stars)
   letter('Claude HQ', { x: office.sign.x + 15, y: office.sign.y + 1, w: office.sign.w - 20, h: office.sign.h - 2 }, ART.paper, 9)
 
   for (const p of office.pods) {
@@ -974,14 +1089,17 @@ export function drawFrame(
     }
   }
 
-  // The lamp over the entrance: green while HQ is live, blinking red while it reconnects.
+  // The lamp over the front door: green while HQ is live, blinking red while it reconnects.
   {
     const e = office.entrance
+    const lamp = { x: e.x + e.w + 3, y: office.h - FACADE + 4, w: 16, h: 6 }
     const lit = ui.connected || blinkOn
     const c = ui.connected ? ART.lampGreen : ART.lampRed
-    rect(e.x, e.y - 5, e.w, 4, lit ? c : ART.lampOff)
-    if (lit) letter('EXIT', { x: e.x, y: e.y - 5, w: e.w, h: 4 }, ART.outline, 4)
+    rect(lamp.x - 1, lamp.y - 1, lamp.w + 2, lamp.h + 2, ART.outline)
+    rect(lamp.x, lamp.y, lamp.w, lamp.h, lit ? c : ART.lampOff)
+    if (lit && ui.connected) letter('OPEN', lamp, ART.outline, 4)
   }
+  for (const w of office.frontWindows) if (visible(w)) drawFrontWindow(rect, w, night)
 
   // Screens light up while someone works at them, and show what kind of work it is.
   const uses = new Map<Sprite, Use>()
@@ -989,14 +1107,12 @@ export function drawFrame(
     const u = model.using(s)
     if (u) uses.set(s, u)
   }
-  const deskOf = (pod: Pod, s: Sprite) => (s.rank === 'senior' ? pod.seniorDesks[s.slot!] : pod.juniorDesks[s.slot!])
   const glows: { x: number; y: number; c: string }[] = []
   for (const [s, u] of uses) {
-    if (u.at !== 'desk' || s.slot == null) continue
-    const pod = model.pod(s.zone)
-    if (!pod) continue
-    const desk = deskOf(pod, s)
-    const m = s.rank === 'senior' ? { x: desk.x + TILE - 5, y: desk.y - 3 } : { x: desk.x + 3, y: desk.y - 2 }
+    const desk = u.at === 'desk' ? model.deskFor(s) : null
+    if (!desk) continue
+    // Two-tile desks have the monitor in the middle; small ones, near the left.
+    const m = desk.w > TILE ? { x: desk.x + TILE - 5, y: desk.y - 3 } : { x: desk.x + 3, y: desk.y - 2 }
     if (s.rank === 'senior' && s.state === 'waiting') {
       rect(m.x + 1, m.y + 1, 8, 5, blinkOn ? pal.turn : ART.screenOff)
       if (blinkOn) glows.push({ x: m.x + 5, y: m.y + 3, c: pal.turn })
@@ -1039,6 +1155,8 @@ export function drawFrame(
     const ms = now - s.actAt
     if (u.at === 'vending') rect(s.x + 3, s.y - 24, 2, 1, Math.floor(now / 400) % 2 ? ART.termText : ART.screenOff)
     if (!u.active) continue
+    const desk = u.at === 'desk' ? model.deskFor(s) : null
+    if (desk) outline(desk, pal.accent, pulse)
     const pod = model.pod(s.zone)
     if (!pod) continue
     if (u.at === 'board') {
@@ -1047,9 +1165,14 @@ export function drawFrame(
     } else if (u.at === 'cabinet') {
       drawDrawer(rect, cabinetAt(pod, s), ms)
       outline(pod.cabinetRect, pal.accent, pulse)
-    } else if (u.at === 'desk' && s.slot != null) {
-      outline(deskOf(pod, s), pal.accent, pulse)
     }
+  }
+
+  // TVs, trophies, dust, uncommitted changes on the whiteboards, parcels and test lamps.
+  if (ui.extras) {
+    const boards = new Set<string>()
+    for (const [s, u] of uses) if (u.at === 'board' && u.active) boards.add(s.zone)
+    drawRoomExtras(ctx, cam, office, model, ui.extras, ui.previews, now, boards, (b, hit) => frame.plaques.push({ ...b, hit }))
   }
 
   // Rooms waiting on you get a border in your-turn pink, the chosen one in accent.
@@ -1105,6 +1228,11 @@ export function drawFrame(
     }
     if (u?.at === 'cabinet' && u.active && Math.floor(now / 300 + s.seed) % 2) dy = -1 // leafing through files
     if (model.asleep(s, now)) dy = Math.floor(now / 1400) % 2 // nodding off
+    if (u?.at === 'stretch') {
+      // Reaching up, then down again.
+      const k = Math.floor(now / 600 + s.seed) % 4
+      dy = k === 1 ? -2 : k === 3 ? 1 : 0
+    }
     if (carried) {
       // Legs kicking, swaying a little.
       step = 1 + (Math.floor(now / 90) % 2)
@@ -1156,6 +1284,12 @@ export function drawFrame(
     overlays.push(() => drawOverlay(ctx, cam, dpr, pal, model, s, u, cx, by + 2 * P, feet, now, mine, frame.asks))
   }
 
+  // Visitors, the mail clerk and the cat; then smoke and sparkles from test runs.
+  if (ui.extras) {
+    overlays.push(...drawNpcs(ctx, cam, dpr, pal, sheets, ui.extras, now, (b, hit) => frame.plaques.push({ ...b, hit })))
+    drawDramaFx(ctx, cam, model, ui.extras, now)
+  }
+
   // Small things that happen above people: steam, water, papers, a magnifier, confetti.
   for (const s of model.sprites.values()) {
     const e = s.emote
@@ -1181,6 +1315,16 @@ export function drawFrame(
     } else if (u.at === 'vending') {
       const t = (now / 1800 + (s.seed % 10) / 10) % 1
       if (t < 0.4) rect(s.x - 2, Math.round(s.y - 22 + (t / 0.4) * 6), 2, 3, ART.can)
+    } else if (u.at === 'printer' || u.at === 'archive') {
+      // A page coming out of the printer, or pulled from the files.
+      const t = (now / 1500 + (s.seed % 10) / 10) % 1
+      ctx.globalAlpha = 1 - t * 0.6
+      drawPage(rect, Math.round(s.x) - 3, Math.round(s.y - 30 + t * (u.at === 'printer' ? 5 : -5)))
+      ctx.globalAlpha = 1
+    } else if (u.at === 'phone') {
+      // A phone held to the ear, on whichever side they face.
+      const side = s.facing === 'left' ? -4 : 3
+      rect(Math.round(s.x) + side, Math.round(s.y) - 13, 1, 4, ART.outline)
     } else if (u.at === 'plant') {
       for (let i = 0; i < 2; i++) rect(s.x - 1 + i * 2, Math.round(s.y - 26 + ((now / 700 + i / 2) % 1) * 8), 1, 1, ART.water)
     } else if (u.at === 'cabinet' && u.active) {
@@ -1369,12 +1513,13 @@ function drawOverlay(
     const tail = px(6)
     const x = Math.max(2, Math.min(cam.vw - w - 2, Math.round(cx - w / 2)))
     const y = Math.max(2, top - h - tail)
+    // Small talk is quieter than what the session actually said.
     const fill = s.bubble.you ? pal['accent-bg'] : pal.panel
-    const stroke = s.bubble.you ? pal.accent : pal['line-strong']
+    const stroke = s.bubble.you ? pal.accent : s.bubble.chatter ? pal.line : pal['line-strong']
     box(ctx, x, y, w, h, fill, stroke, lw, 4 * dpr)
     ctx.fillStyle = stroke
     ctx.fillRect(Math.round(cx - tail / 2), y + h - lw, tail, tail)
-    ctx.fillStyle = s.bubble.you ? pal['accent-text'] : pal.text
+    ctx.fillStyle = s.bubble.you ? pal['accent-text'] : s.bubble.chatter ? pal['text-2'] : pal.text
     lines.forEach((l, i) => ctx.fillText(l, x + pad, y + pad + i * lineH))
     return
   }

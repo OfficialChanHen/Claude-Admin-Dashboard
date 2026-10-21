@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { api, type ActiveSession, type Approval, type LiveEvent, type Project } from './lib/api'
+import { api, type ActiveSession, type Approval, type LiveEvent, type Preview, type Project } from './lib/api'
 import { useLive } from './lib/useLive'
 import { keep, kept } from './lib/keep'
 import { Keep } from './components/Keep'
@@ -15,6 +15,8 @@ import { AskPopup } from './components/ApprovalCards'
 import { World, type DoorDrop, type WorldControl } from './components/World'
 import { PromptBar, type PromptTarget, type SendOptions } from './components/PromptBar'
 import { OTHER, WorldModel } from './world/model'
+import { Extras } from './world/extras'
+import { PreviewPanel } from './components/PreviewPanel'
 import { HUB } from './world/office'
 import { PixelIcon } from './components/PixelIcon'
 import { KeyPanel } from './components/KeyPanel'
@@ -29,7 +31,7 @@ const MAX_FEED = 300
 
 type Win =
   | { kind: 'projects' } | { kind: 'usage'; projectId: string | null } | { kind: 'limits' } | { kind: 'log' } | { kind: 'project'; projectId: string }
-  | { kind: 'key' } | { kind: 'clipboard'; projectId: string } | { kind: 'reports' }
+  | { kind: 'key' } | { kind: 'clipboard'; projectId: string } | { kind: 'reports' } | { kind: 'tv'; projectId: string }
 
 // Steps that change what is on a clipboard: a to-do list, or a helper sent off.
 const PLAN_TOOLS = new Set(['TodoWrite', 'Agent', 'Task'])
@@ -117,6 +119,17 @@ export function App() {
     Object.setPrototypeOf(world.current, WorldModel.prototype)
   }
   const control = useRef<WorldControl | null>(null)
+  // Visitors, parcels, the cat and the weather; kept across hot updates like the model.
+  const extras = useRef<Extras>()
+  if (!extras.current) extras.current = new Extras()
+  else if (import.meta.env.DEV && Object.getPrototypeOf(extras.current) !== Extras.prototype) Object.setPrototypeOf(extras.current, Extras.prototype)
+  const [previews, setPreviews] = useState<Map<string, Preview>>(new Map())
+  const loadGit = useCallback(() => api.git().then((g) => extras.current!.setGit(g)).catch(() => {}), [])
+  const loadPreviews = useCallback(() => api.previews().then((list) => setPreviews(new Map(list.map((p) => [p.projectId, p])))).catch(() => {}), [])
+  useEffect(() => {
+    loadGit()
+    loadPreviews()
+  }, [loadGit, loadPreviews])
   const [promptFocus, setPromptFocus] = useState(0)
   const [approvals, setApprovals] = useState<Approval[]>([])
 
@@ -197,6 +210,7 @@ export function App() {
       setFeed((f) => [item, ...f].slice(0, MAX_FEED))
     }
     world.current!.ingest(ev)
+    extras.current!.ingest(ev, world.current!)
     switch (ev.kind) {
       case 'projects':
         loadProjects()
@@ -207,6 +221,12 @@ export function App() {
       case 'report':
         setReportCount((n) => n + 1)
         setReportTick((n) => n + 1)
+        break
+      case 'git_state':
+        loadGit()
+        break
+      case 'previews':
+        loadPreviews()
         break
       case 'hierarchy':
         setReportTick((n) => n + 1)
@@ -269,7 +289,7 @@ export function App() {
         bumpUsage()
         break
     }
-  }, [loadProjects, loadActive])
+  }, [loadProjects, loadActive, loadGit, loadPreviews])
 
   const { connected, limits } = useLive(onEvent)
 
@@ -341,6 +361,12 @@ export function App() {
         break
       case 'pod':
         enterRoom(h.podId)
+        break
+      case 'tv':
+        setWin({ kind: 'tv', projectId: h.podId })
+        break
+      case 'cat':
+        extras.current!.pet()
         break
       case 'hub':
         enterRoom(HUB)
@@ -460,6 +486,14 @@ export function App() {
     ) : (
       <p className="panel-body note">Sessions started outside your projects gather here.</p>
     )
+  } else if (win?.kind === 'tv') {
+    const p = projectMap.get(win.projectId)
+    windowTitle = `${p?.name ?? 'Other folders'} TV`
+    windowBody = p ? (
+      <PreviewPanel project={p} preview={previews.get(p.id)} git={extras.current!.git.get(p.id)} />
+    ) : (
+      <p className="panel-body note">Sessions started outside your projects have no dev server to show.</p>
+    )
   } else if (win?.kind === 'key') {
     windowTitle = 'Notice board'
     windowBody = <KeyPanel />
@@ -508,6 +542,8 @@ export function App() {
       <Keep name="The office">
         <World
           model={world.current!}
+          extras={extras.current!}
+          previews={previews}
           projects={projects}
           focus={focus}
           room={room}
@@ -536,7 +572,7 @@ export function App() {
             Answer {s.title ?? 'Untitled session'}, who needs your OK
           </button>
         ))}
-        <button onClick={flipLights}>Flip the lights</button>
+        <button onClick={flipLights}>Switch between light and dark theme</button>
       </nav>
 
       <div className="hud-right">

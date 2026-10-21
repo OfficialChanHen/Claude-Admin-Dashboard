@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  FIXTURE_H, FLOORS, HUB, JUNIOR_SLOTS, ROOM_WALL, SENIOR_SLOTS, TILE, WALL, areaAt, buildOffice, gridFor, looksFor, neighbor, outerRect, roomBounds, roomById,
+  FACADE, FIXTURE_H, FLOORS, HUB, JUNIOR_SLOTS, ROOM_WALL, SENIOR_SLOTS, TILE, WALL, areaAt, buildOffice, gridFor, looksFor, neighbor, outerRect, roomBounds, roomById,
   rooms, route, wallBand,
   type Area, type Point, type Rect,
 } from './office'
@@ -82,21 +82,34 @@ describe('buildOffice', () => {
     for (const a of rooms(o)) expect(wallBand(a)).toBeGreaterThanOrEqual(0)
   })
 
-  it('has break spots in the hub and a way in through the back wall', () => {
+  it('has break spots in the hub and a front door onto the street', () => {
     const o = buildOffice(infos(3))
     expect(o.breakSpots.length).toBeGreaterThan(3)
     for (const b of o.breakSpots) expect(areaAt(o, b)).toBe(o.hub)
-    expect(o.entrance.y + o.entrance.h).toBe(WALL * TILE)
-    expect(areaAt(o, o.door)).toBeNull()
+    expect(o.entrance.y + o.entrance.h).toBe(o.h)
+    // People come in off the sidewalk, straight up the corridor through the door.
+    expect(o.door.y).toBeGreaterThan(o.h)
     expect(o.corridorXs).toContain(o.door.x)
+    expect(o.door.x).toBeGreaterThan(o.entrance.x)
+    expect(o.door.x).toBeLessThan(o.entrance.x + o.entrance.w)
+    const path = route(o, o.door, o.pods[0].seniorSeats[0])
+    expect(path[0]).toEqual({ x: o.door.x, y: expect.any(Number) })
+    expect(path[0].y).toBeLessThan(o.entrance.y)
   })
 
-  it('keeps the windows clear of the sign and the entrance', () => {
+  it('keeps the windows clear of the sign, the light switch and the front door', () => {
     const o = buildOffice(infos(12))
+    const lights = o.facilities.find((f) => f.key === 'lights')!.rect
     expect(o.windows.length).toBeGreaterThan(0)
     for (const w of o.windows) {
       expect(overlaps(w, o.sign)).toBe(false)
+      expect(overlaps(w, lights)).toBe(false)
+    }
+    expect(o.frontWindows.length).toBeGreaterThan(0)
+    for (const w of o.frontWindows) {
       expect(overlaps(w, o.entrance)).toBe(false)
+      expect(w.y).toBeGreaterThanOrEqual(o.h - FACADE)
+      expect(w.x + w.w).toBeLessThanOrEqual(o.w)
     }
   })
 
@@ -140,6 +153,7 @@ describe('route', () => {
   const spots: Point[] = [
     ...o.pods.flatMap((p) => [...p.seniorSeats, ...p.juniorSeats, p.board, p.cabinet]),
     ...o.breakSpots,
+    ...o.hubSeats,
     o.door,
   ]
 
@@ -268,7 +282,16 @@ describe('rooms', () => {
   })
 
   it('has its break furniture in the hub', () => {
-    expect(o.lounge.map((l) => l.thing).sort()).toEqual(['coffee', 'sofa', 'table', 'vending'])
+    expect(o.lounge.map((l) => l.thing).sort()).toEqual(['coffee', 'hotdesk', 'sofa', 'table', 'table', 'vending'])
     for (const l of o.lounge) expect(areaAt(o, { x: l.rect.x + 1, y: l.rect.y + 1 })).toBe(o.hub)
+  })
+
+  it('has spare seats and break spots in the hub, every one its own place', () => {
+    expect(o.hubSeats.length).toBeGreaterThanOrEqual(5)
+    expect(new Set(o.breakSpots.map((b) => b.kind))).toEqual(new Set(['coffee', 'vending', 'table', 'sofa', 'plant', 'archive', 'printer', 'stretch', 'phone']))
+    const all = [...o.hubSeats, ...o.breakSpots]
+    for (const p of all) expect(areaAt(o, p)).toBe(o.hub)
+    all.forEach((a, i) => all.forEach((b, j) => i !== j && expect(a.x === b.x && a.y === b.y).toBe(false)))
+    for (const h of o.hubSeats) expect(inside(h.desk, o.hub.rect)).toBe(true)
   })
 })

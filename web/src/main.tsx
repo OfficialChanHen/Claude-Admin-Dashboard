@@ -1,8 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/inter'
-import '@fontsource/pixelify-sans/400.css'
-import '@fontsource/pixelify-sans/500.css'
+import '@fontsource/jersey-15'
 import './styles.css'
 import { App } from './App'
 
