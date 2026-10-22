@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ActiveSession, LiveEvent } from '../lib/api'
-import { buildOffice } from './office'
+import { BOSS, buildOffice } from './office'
 import { MAX_JUNIORS_PER_SESSION, OTHER, WorldModel, clip, helperName, promptText, stationFor, type Sprite } from './model'
 
 const NOW = 1_800_000_000_000
@@ -206,6 +206,33 @@ describe('seniors', () => {
     expect(m.sprites.get('s1')!.activity).not.toBe('leave')
     m.sync([], NOW + 61_000)
     expect(m.sprites.get('s1')!.activity).toBe('leave')
+  })
+})
+
+describe('the boss', () => {
+  it('works from the corner office, facing the room, while managers stay with their projects', () => {
+    const m = world()
+    m.sync([
+      session('boss', { projectId: null, role: 'boss', state: 'idle', lastAt: NOW - 5 * 60_000 }),
+      session('mgr', { role: 'manager', state: 'idle', lastAt: NOW - 5 * 60_000 }),
+    ], NOW)
+    const boss = m.sprites.get('boss')!
+    expect(boss.zone).toBe(BOSS)
+    expect(at(boss, office.boss.seniorSeats[0])).toBe(true)
+    expect(boss.facing).toBe('down')
+    expect(m.sprites.get('mgr')!.zone).toBe('p1')
+  })
+
+  it("brings the boss's helpers into the office, to the chairs across the desk", () => {
+    const m = world()
+    m.sync([session('boss', { projectId: null, role: 'boss', lastAt: NOW - 5 * 60_000 })], NOW)
+    m.ingest(agentStart('h1', 't1', 'boss'), NOW)
+    const h = m.sprites.get('h1')!
+    expect(h.zone).toBe(BOSS)
+    m.ingest(action({ sessionId: 'boss', projectId: null, agentId: 'h1', id: 'a2', tool: 'Edit' }), NOW)
+    run(m, 20)
+    expect(office.boss.juniorSeats.some((p) => at(h, p))).toBe(true)
+    expect(h.facing).toBe('up')
   })
 })
 

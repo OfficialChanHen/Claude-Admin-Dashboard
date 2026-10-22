@@ -1,5 +1,5 @@
 import type { ActiveSession, LiveEvent, Role, SessionState } from '../lib/api'
-import { JUNIOR_SLOTS, SENIOR_SLOTS, TILE, route, type BreakSpot, type Facing, type HubSeat, type Office, type Pod, type Point, type Rect } from './office'
+import { BOSS, TILE, facesRoom, route, type BreakSpot, type Facing, type HubSeat, type Office, type Pod, type Point, type Rect } from './office'
 import { TASKS, taskOf, type Station, type TaskKind } from './tasks'
 import { chatFor, lineFor, topicFor, type Topic } from './chatter'
 
@@ -80,6 +80,11 @@ export const MAX_JUNIORS_PER_SESSION = 3
 /** What a person is called in the office: HQ's managers and boss by their role, everyone else by their session title. */
 export function nameOf(a: Pick<ActiveSession, 'title' | 'role'>) {
   return a.role === 'boss' ? 'The boss' : a.role === 'manager' ? 'Manager' : a.title ?? 'Untitled session'
+}
+
+/** Which room someone works in: the boss in their own office, everyone else in their project's. */
+export function zoneOf(a: Pick<ActiveSession, 'projectId' | 'role'>) {
+  return a.role === 'boss' ? BOSS : a.projectId ?? OTHER
 }
 
 const HELPER_KINDS: Record<string, string> = { 'general-purpose': 'Helper', Explore: 'Explorer', Plan: 'Planner' }
@@ -166,14 +171,20 @@ export class WorldModel {
   }
 
   pod(zone: string): Pod | null {
+    if (zone === BOSS) return this.office?.boss ?? null
     return this.office?.pods.find((p) => p.id === zone) ?? null
+  }
+
+  /** Which way someone faces at their desk: at the screen, or the boss out at the room. */
+  private deskFacing(s: Sprite): Facing {
+    return s.slot != null && facesRoom(this.pod(s.zone), s.rank === 'senior') ? 'down' : 'up'
   }
 
   private claim(s: Sprite) {
     const pod = this.pod(s.zone)
     if (!pod) return
     const table = s.rank === 'senior' ? this.seniorDesks : this.juniorDesks
-    const size = s.rank === 'senior' ? SENIOR_SLOTS : JUNIOR_SLOTS
+    const size = (s.rank === 'senior' ? pod.seniorSeats : pod.juniorSeats).length
     const desks = table.get(pod.id) ?? Array<string | null>(size).fill(null)
     table.set(pod.id, desks)
     const i = desks.indexOf(null)
@@ -315,7 +326,7 @@ export class WorldModel {
       s.x = seat.x
       s.y = seat.y
       s.path = []
-      s.facing = 'up'
+      s.facing = this.deskFacing(s)
       if (s.activity === 'arrive' || s.activity === 'brief' || s.activity === 'break') s.activity = 'work'
     }
     s.restUntil = now + BREAK_AFTER_MS + this.rand() * 4000
@@ -352,7 +363,7 @@ export class WorldModel {
       if (s) {
         s.role = a.role ?? null
         s.label = nameOf(a)
-        const zone = a.projectId ?? OTHER
+        const zone = zoneOf(a)
         if (s.zone !== zone) {
           this.release(s)
           s.zone = zone
@@ -361,7 +372,7 @@ export class WorldModel {
         }
         if (s.state !== a.state) this.setState(s, a.state, now)
       } else if (a.state !== 'ended') {
-        this.make({ sessionId: a.id, agentId: null, zone: a.projectId ?? OTHER, atDoor: now - a.lastAt < RECENT_MS, state: a.state, ts: a.lastAt, label: nameOf(a), now }).role = a.role ?? null
+        this.make({ sessionId: a.id, agentId: null, zone: zoneOf(a), atDoor: now - a.lastAt < RECENT_MS, state: a.state, ts: a.lastAt, label: nameOf(a), now }).role = a.role ?? null
       }
     }
     for (const s of this.sprites.values()) {
@@ -413,12 +424,14 @@ export class WorldModel {
     const key = ev.agentId ?? ev.sessionId
     let s = this.sprites.get(key)
     if (!s && live) {
-      if (ev.agentId && !this.roomForJunior(ev.sessionId, ev.projectId ?? OTHER)) {
+      // Helpers work in their session's room, which for the boss is the boss's office.
+      const zone = (ev.agentId && this.sprites.get(ev.sessionId)?.zone) || (ev.projectId ?? OTHER)
+      if (ev.agentId && !this.roomForJunior(ev.sessionId, zone)) {
         this.hide(ev.sessionId, ev.agentId, ev.ts)
         return undefined
       }
       s = this.make({
-        sessionId: ev.sessionId, agentId: ev.agentId, zone: ev.projectId ?? OTHER, atDoor: true,
+        sessionId: ev.sessionId, agentId: ev.agentId, zone, atDoor: true,
         state: 'working', ts: ev.ts, label: ev.agentId ? 'Helper' : 'Session', now,
       })
     }
@@ -810,17 +823,18 @@ export class WorldModel {
 
   /** At the desk with nothing running: glance around now and then. */
   private fidget(s: Sprite, now: number) {
+    const ahead = this.deskFacing(s)
     if (s.running) {
-      s.facing = 'up'
+      s.facing = ahead
       return
     }
     if (now < s.lookUntil) {
       s.facing = s.lookDir
       return
     }
-    s.facing = 'up'
+    s.facing = ahead
     if (this.rand() < 0.004) {
-      const dirs: Facing[] = ['left', 'right', 'down']
+      const dirs: Facing[] = ahead === 'up' ? ['left', 'right', 'down'] : ['left', 'right']
       s.lookDir = dirs[Math.floor(this.rand() * dirs.length)]
       s.lookUntil = now + 900 + this.rand() * 1600
     }

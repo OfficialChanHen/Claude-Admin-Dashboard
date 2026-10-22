@@ -222,6 +222,7 @@ const FLOOR_TONES: Record<FloorKind, [string, string, string][]> = {
   carpet: [['#8f8a80', '#9b968b', '#7c776e'], ['#8a7466', '#967f70', '#776357'], ['#6f7a73', '#7a857e', '#5f6962']],
   parquet: [['#b98a5c', '#a87b50', '#7d5737'], ['#cfa676', '#c09867', '#97734c'], ['#94694a', '#865d40', '#5f412d']],
   bricks: [['#c4b8a6', '#b8ac99', '#948875'], ['#b3aa9f', '#a79e93', '#857d73'], ['#cdb79a', '#c1aa8c', '#9c876b']],
+  executive: [['#7a2e2e', '#843636', '#5e2222']], // only the boss's office
 }
 
 type Fill = (x: number, y: number, w: number, h: number, c: string) => void
@@ -257,6 +258,11 @@ function drawFloor(ctx: CanvasRenderingContext2D, p: Pod) {
     case 'carpet':
       // Tweed: a sparse, even fleck.
       for (let y = 0; y < h; y++) for (let x = (y * 3) % 5; x < w; x += 5) fill(x, y, 1, 1, (x + y) % 2 ? alt : line)
+      break
+    case 'executive':
+      // Deep red carpet with a gold border a little in from the walls.
+      for (let y = 0; y < h; y++) for (let x = (y * 3) % 5; x < w; x += 5) fill(x, y, 1, 1, (x + y) % 2 ? alt : line)
+      for (const [bx, by, bw, bh] of [[4, 4, w - 8, 1], [4, h - 5, w - 8, 1], [4, 4, 1, h - 8], [w - 5, 4, 1, h - 8]]) fill(bx, by, bw, bh, ART.brass)
       break
     case 'parquet':
       // 8px squares of three boards, turning each square.
@@ -472,7 +478,7 @@ export function drawBackground(office: Office, sheets: Sheets) {
   drawSign(fill, office.sign)
 
   // Each area has its own floor, so areas are easy to tell apart, and walls, so each is a room.
-  for (const p of office.pods) drawFloor(ctx, p)
+  for (const p of [...office.pods, office.boss]) drawFloor(ctx, p)
   for (const a of rooms(office)) drawWalls(ctx, a)
   drawShell(ctx, fill, office, sheets.city)
   for (const pr of office.props) blit(ctx, sheets, pr.sheet, pr.c, pr.r, pr.x, pr.y, 1)
@@ -485,6 +491,7 @@ export function drawBackground(office: Office, sheets: Sheets) {
     drawPlate(fill, p.plate)
     drawClipboard(fill, p.clipboard)
   }
+  drawPlate(fill, office.boss.plate)
   for (const f of office.facilities) {
     if (f.key === 'notice') drawNotice(fill, f.rect)
     // The switch flips the app between its light and dark theme.
@@ -737,7 +744,7 @@ const thingKey = (h: Hit) => ('rect' in h && h.rect ? `${h.thing}@${h.rect.x},${
 export function sameHit(a: Hit | null, b: Hit | null) {
   if (!a || !b || a.kind !== b.kind) return false
   if (a.kind === 'sprite' || a.kind === 'ask') return b.kind === a.kind && b.sessionId === a.sessionId
-  if (a.kind === 'facility') return b.kind === 'facility' && a.key === b.key
+  if (a.kind === 'facility') return b.kind === 'facility' && a.key === b.key && a.label === b.label
   if (a.kind === 'cat') return true
   if (a.kind === 'hub') return thingKey(a) === thingKey(b)
   return 'podId' in b && a.podId === b.podId && thingKey(a) === thingKey(b)
@@ -745,7 +752,11 @@ export function sameHit(a: Hit | null, b: Hit | null) {
 
 /** The art rectangle a clickable thing covers, for hover outlines. */
 export function hitRect(office: Office, hit: Hit): Rect | null {
-  if (hit.kind === 'facility') return office.facilities.find((f) => f.key === hit.key)?.rect ?? null
+  if (hit.kind === 'facility') {
+    // The reports open from two places, told apart by their labels.
+    const mine = office.facilities.filter((f) => f.key === hit.key)
+    return (mine.find((f) => f.label === hit.label) ?? mine[0])?.rect ?? null
+  }
   if (hit.kind === 'board' || hit.kind === 'plaque' || hit.kind === 'clipboard') {
     const p = office.pods.find((x) => x.id === hit.podId)
     return p ? (hit.kind === 'board' ? p.boardRect : hit.kind === 'clipboard' ? p.clipboard : p.plate) : null
@@ -1025,7 +1036,8 @@ export function drawFrame(
   const overlays: (() => void)[] = []
   const px = (n: number) => Math.round(n * dpr)
   const lw = Math.max(1, px(2))
-  const statuses = new Map(office.pods.map((p) => [p.id, podStatus(model, p.id)]))
+  const plated = [...office.pods, office.boss]
+  const statuses = new Map(plated.map((p) => [p.id, podStatus(model, p.id)]))
   const outline = (r: Rect, color: string, alpha = 1) => {
     ctx.globalAlpha = alpha
     ctx.lineWidth = lw
@@ -1047,7 +1059,7 @@ export function drawFrame(
   if (ui.extras) drawWindowWeather(ctx, cam, office, ui.extras, now, skyAt(hourOf(date)).stars)
   letter('Claude HQ', { x: office.sign.x + 15, y: office.sign.y + 1, w: office.sign.w - 20, h: office.sign.h - 2 }, ART.paper, 9)
 
-  for (const p of office.pods) {
+  for (const p of plated) {
     if (!visible(p.plate)) continue
     const lamp = lampFor(statuses.get(p.id)!)
     const lit = !lamp.blink || blinkOn
@@ -1110,7 +1122,8 @@ export function drawFrame(
   const glows: { x: number; y: number; c: string }[] = []
   for (const [s, u] of uses) {
     const desk = u.at === 'desk' ? model.deskFor(s) : null
-    if (!desk) continue
+    // The boss's desk has no screen: work there is paper and phone calls.
+    if (!desk || model.pod(s.zone)?.kind === 'boss') continue
     // Two-tile desks have the monitor in the middle; small ones, near the left.
     const m = desk.w > TILE ? { x: desk.x + TILE - 5, y: desk.y - 3 } : { x: desk.x + 3, y: desk.y - 2 }
     if (s.rank === 'senior' && s.state === 'waiting') {
@@ -1177,7 +1190,7 @@ export function drawFrame(
 
   // Rooms waiting on you get a border in your-turn pink, the chosen one in accent.
   ctx.lineWidth = lw
-  for (const p of office.pods) {
+  for (const p of plated) {
     const waiting = statuses.get(p.id)!.waiting > 0
     if (!waiting && ui.focus !== p.id) continue
     const r = outerRect(p)
@@ -1238,7 +1251,8 @@ export function drawFrame(
       step = 1 + (Math.floor(now / 90) % 2)
       dx = Math.round(Math.sin(now / 140) * 1.5)
     }
-    const seated = u?.at === 'table' || u?.at === 'sofa'
+    // The boss and their visitors sit in proper chairs, so their legs are hidden too.
+    const seated = u?.at === 'table' || u?.at === 'sofa' || (u?.at === 'desk' && model.pod(s.zone)?.kind === 'boss' && s.slot != null)
     const e = s.emote
     if (e?.kind === 'done' && now - e.since < 500) dy -= Math.round(Math.sin(((now - e.since) / 500) * Math.PI) * 3) // a little hop
     if (e?.kind === 'error' && now - e.since < 450) dx += Math.floor(now / 60) % 2 ? 1 : -1 // a shake
@@ -1612,6 +1626,11 @@ export function hitFloor(office: Office, x: number, y: number): Hit | null {
       if (within({ x: d.x, y: d.y - 4, w: d.w, h: d.h + 4 })) return { ...base, thing: 'desk', rect: d }
     }
     return base
+  }
+  const b = office.boss
+  if (within(b.rect, 4)) {
+    const base = { kind: 'pod' as const, podId: b.id, label: b.name }
+    return within(b.seniorDesks[0]) ? { ...base, thing: 'desk', rect: b.seniorDesks[0] } : base
   }
   return null
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  FACADE, FIXTURE_H, FLOORS, HUB, JUNIOR_SLOTS, ROOM_WALL, SENIOR_SLOTS, TILE, WALL, areaAt, buildOffice, gridFor, looksFor, neighbor, outerRect, roomBounds, roomById,
+  BOSS, FACADE, FIXTURE_H, FLOORS, HUB, JUNIOR_SLOTS, ROOM_WALL, SENIOR_SLOTS, TILE, WALL, areaAt, buildOffice, gridFor, looksFor, neighbor, outerRect, roomBounds, roomById,
   rooms, route, wallBand,
   type Area, type Point, type Rect,
 } from './office'
@@ -61,8 +61,11 @@ describe('buildOffice', () => {
 
   it.each([3, 12])('has the office services in and on the walls of the hub, with %i projects', (n) => {
     const o = buildOffice(infos(n))
-    expect(o.facilities.map((f) => f.key).sort()).toEqual(['accounts', 'archive', 'clock', 'lights', 'limits', 'notice', 'reception'])
-    for (const f of o.facilities) if (f.key !== 'lights') expect(overlaps(f.rect, roomBounds(o.hub))).toBe(true)
+    expect(o.facilities.map((f) => f.key).sort()).toEqual(['accounts', 'archive', 'clock', 'lights', 'limits', 'notice', 'reception', 'reports', 'reports'])
+    for (const f of o.facilities) {
+      if (f.key === 'reports') expect(overlaps(f.rect, roomBounds(o.boss))).toBe(true)
+      else if (f.key !== 'lights') expect(overlaps(f.rect, roomBounds(o.hub))).toBe(true)
+    }
     // Fixtures never overlap each other.
     o.facilities.forEach((a, i) => o.facilities.forEach((b, j) => i !== j && expect(overlaps(a.rect, b.rect)).toBe(false)))
   })
@@ -261,16 +264,35 @@ describe('rooms', () => {
   })
 
   it('skips a gap to the nearest room that way', () => {
-    // Nine projects and the hub on a 4 by 3 grid: rooms fill outward from the
-    // hub at (1, 1), so the two far corners on the right stay empty.
-    const big = buildOffice(infos(9))
+    // Eight projects, the hub and the boss on a 4 by 3 grid: the boss has the
+    // top right corner and rooms fill outward from the hub at (1, 1), so the
+    // last two cells on the bottom row stay empty.
+    const big = buildOffice(infos(8))
     expect(big.grid).toEqual({ cols: 4, rows: 3 })
     const at = (c: number, r: number) => rooms(big).find((a) => a.cell.c === c && a.cell.r === r)
-    expect(at(3, 0)).toBeUndefined()
+    expect(at(3, 0)?.id).toBe(BOSS)
+    expect(at(2, 2)).toBeUndefined()
     expect(at(3, 2)).toBeUndefined()
-    expect(neighbor(big, at(3, 1)!.id, 'down')?.cell).toEqual({ c: 2, r: 2 })
-    expect(neighbor(big, at(2, 2)!.id, 'right')?.cell).toEqual({ c: 3, r: 1 })
+    expect(neighbor(big, at(3, 1)!.id, 'down')?.cell).toEqual({ c: 1, r: 2 })
+    expect(neighbor(big, at(1, 2)!.id, 'right')?.cell).toEqual({ c: 2, r: 1 })
     expect(neighbor(big, at(3, 1)!.id, 'right')).toBeNull()
+  })
+
+  it.each([0, 3, 12])('gives the boss a corner office of their own, with %i projects', (n) => {
+    const o = buildOffice(infos(n))
+    expect(o.boss.cell).toEqual({ c: o.grid.cols - 1, r: 0 })
+    for (const a of [o.hub, ...o.pods]) expect(overlaps(outerRect(a), outerRect(o.boss))).toBe(false)
+    // One chair behind the desk, two across it, and a plate on the back wall.
+    expect(o.boss.seniorSeats).toHaveLength(1)
+    expect(o.boss.juniorSeats).toHaveLength(2)
+    for (const p of [...o.boss.seniorSeats, ...o.boss.juniorSeats]) expect(areaAt(o, p)).toBe(o.boss)
+    expect(o.boss.plate.y + o.boss.plate.h).toBeLessThanOrEqual(o.boss.rect.y)
+    // The way in and out stays clear of the desk.
+    const desk = o.boss.seniorDesks[0]
+    for (const p of [...o.boss.seniorSeats, ...o.boss.juniorSeats]) {
+      const path = [o.door, ...route(o, o.door, p)]
+      for (let i = 1; i < path.length; i++) expect(crosses(path[i - 1], path[i], desk)).toBe(false)
+    }
   })
 
   it('puts the cabinets where people stand to read', () => {

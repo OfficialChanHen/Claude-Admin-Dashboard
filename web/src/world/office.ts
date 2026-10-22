@@ -18,13 +18,14 @@ export const CAP = 5 // art px: the top of the building's outer walls, seen from
 export const FACADE = 32 // art px: the front of the building, seen from the street
 export const FRONT = CAP + FACADE // art px: the whole front wall, top and face
 export const HUB = '_hub'
+export const BOSS = '_boss'
 
 export type Sheet = 'indoor' | 'urban'
 export type Prop = { sheet: Sheet; c: number; r: number; x: number; y: number } // sheet tile, then art px on the floor
 export type Point = { x: number; y: number }
 export type Rect = { x: number; y: number; w: number; h: number } // art px
 
-export type AreaKind = 'pod' | 'hub'
+export type AreaKind = 'pod' | 'hub' | 'boss'
 export type Area = {
   id: string
   kind: AreaKind
@@ -56,7 +57,7 @@ export type Pod = Area & {
 }
 
 /** What makes each area its own: the floor, which way round it is, and the odds and ends in it. */
-export type FloorKind = 'planks' | 'tiles' | 'checker' | 'carpet' | 'parquet' | 'bricks'
+export type FloorKind = 'planks' | 'tiles' | 'checker' | 'carpet' | 'parquet' | 'bricks' | 'executive'
 export type Look = { floor: FloorKind; tone: number; mirror: boolean; decor: number }
 
 export const FLOORS: FloorKind[] = ['planks', 'tiles', 'checker', 'carpet', 'parquet', 'bricks']
@@ -110,8 +111,9 @@ export function looksFor(ids: string[]): Look[] {
 /**
  * Things you click for office services. The clock, the plan meter and the
  * notice board hang on the hub's back wall; the light switch is by the entrance.
+ * The boss's name plate and bookshelves open the reports.
  */
-export type FacilityKey = 'reception' | 'accounts' | 'archive' | 'clock' | 'limits' | 'notice' | 'lights'
+export type FacilityKey = 'reception' | 'accounts' | 'archive' | 'clock' | 'limits' | 'notice' | 'lights' | 'reports'
 export type Facility = { key: FacilityKey; label: string; rect: Rect; stand: Point }
 
 export type BreakSpot = Point & {
@@ -130,6 +132,8 @@ export type Office = {
   grid: { cols: number; rows: number }
   pods: Pod[]
   hub: Area
+  /** The boss's corner office: one long desk, and two chairs across it for whoever reports in. */
+  boss: Pod
   facilities: Facility[]
   breakSpots: BreakSpot[]
   hubSeats: HubSeat[]
@@ -196,13 +200,15 @@ const DECOR: { kind: DecorKind; c: number; r: number }[][] = [
 ]
 
 export function buildOffice(infos: PodInfo[]): Office {
-  const grid = gridFor(infos.length)
+  const grid = gridFor(infos.length + 1)
   const hubCell = { c: Math.floor((grid.cols - 1) / 2), r: Math.floor((grid.rows - 1) / 2) }
+  // The boss has the corner office: top right, along the back wall.
+  const bossCell = { c: grid.cols - 1, r: 0 }
   const cellOrigin = (c: number, r: number) => ({ x: t(EDGE + c * CELL_W), y: t(WALL + r * CELL_H) })
 
   // Nearest cells to the hub first, so the first projects sit closest.
   const cells: { c: number; r: number }[] = []
-  for (let r = 0; r < grid.rows; r++) for (let c = 0; c < grid.cols; c++) if (c !== hubCell.c || r !== hubCell.r) cells.push({ c, r })
+  for (let r = 0; r < grid.rows; r++) for (let c = 0; c < grid.cols; c++) if ((c !== hubCell.c || r !== hubCell.r) && (c !== bossCell.c || r !== bossCell.r)) cells.push({ c, r })
   const dist = (a: { c: number; r: number }) => Math.abs(a.c - hubCell.c) + Math.abs(a.r - hubCell.r)
   cells.sort((a, b) => dist(a) - dist(b) || a.r - b.r || a.c - b.c)
 
@@ -270,6 +276,8 @@ export function buildOffice(infos: PodInfo[]): Office {
       look,
     }
   })
+
+  const boss = bossOffice(area(BOSS, 'boss', "Boss's office", bossCell), put)
 
   // The hub: break area on the left, spare seats in the middle, office services
   // on the right. Rows 0 to 7 as in an area: row 0 counters and cabinets, rows
@@ -365,7 +373,11 @@ export function buildOffice(infos: PodInfo[]): Office {
   const entrance = { x: hub.exitX - t(GAP) / 2, y: h - FRONT, w: t(GAP), h: FRONT }
   const door = { x: hub.exitX, y: h + 7 }
   const lights = { x: hub.exitX - 3, y: 8, w: 6, h: 9 }
-  facilities.push({ key: 'lights', label: 'Light switch', rect: lights, stand: { x: hub.exitX, y: t(WALL) + 6 } })
+  facilities.push(
+    { key: 'lights', label: 'Light switch', rect: lights, stand: { x: hub.exitX, y: t(WALL) + 6 } },
+    { key: 'reports', label: "Boss's office: reports", rect: boss.plate, stand: { x: boss.board.x, y: boss.aisles[0] } },
+    { key: 'reports', label: 'Shelf of reports', rect: boss.cabinetRect, stand: boss.cabinet },
+  )
   const sign = { x: hx + 16, y: CAP + 1, w: t(POD_W) - 32, h: 12 }
   const apart = (r: Rect, others: Rect[]) => others.every((o) => !(r.x < o.x + o.w && o.x < r.x + r.w))
   const windows: Rect[] = []
@@ -380,7 +392,53 @@ export function buildOffice(infos: PodInfo[]): Office {
     if (apart(r, [{ ...entrance, x: entrance.x - 8, w: entrance.w + 32 }])) frontWindows.push(r)
   }
   const receptionist = { x: hx + t(7) + 8, y: hy + t(2) + 13 }
-  return { w, h, grid, pods, hub, facilities, breakSpots, hubSeats, lounge, door, entrance, frontWindows, sign, windows, receptionist, corridorXs, corridorYs, props, monitors }
+  return { w, h, grid, pods, hub, boss, facilities, breakSpots, hubSeats, lounge, door, entrance, frontWindows, sign, windows, receptionist, corridorXs, corridorYs, props, monitors }
+}
+
+/**
+ * The boss's office (tiles, as in an area): bookshelves, a picture and a
+ * whiteboard along the back; the boss behind a long desk, facing the room; two
+ * chairs on a rug for whoever reports in; and a sofa by the door. Rows 1, 4 and
+ * 7 stay clear to walk along.
+ */
+function bossOffice(a: Area, put: (sheet: Sheet, c: number, r: number, x: number, y: number) => void): Pod {
+  const { x, y } = a.rect
+  for (let i = 0; i < 3; i++) put('indoor', 19 + i, 17, x + t(i), y) // bookshelves
+  put('indoor', 16, 0, x + t(3), y)
+  put('indoor', 19, 12, x + t(4), y) // a landscape
+  put('indoor', 22, 9, x + t(5), y) // a shield, for the trophy wall
+  put('urban', 8, 13, x + t(6), y)
+  put('urban', 9, 13, x + t(7), y)
+  put('urban', 10, 13, x + t(8), y) // whiteboard
+  put('indoor', 17, 0, x + t(9), y)
+  put('indoor', 17, 0, x, y + t(2))
+  put('indoor', 16, 0, x + t(9), y + t(2))
+  put('indoor', 0, 2, x + t(4), y + t(2)) // the boss's chair, facing the room
+  for (let i = 0; i < 3; i++) put('indoor', 1 + i, 11, x + t(3 + i), y + t(3)) // the desk
+  for (let i = 0; i < 3; i++) put('indoor', 16 + i, 14, x + t(3 + i), y + t(6)) // a runner behind the visitors' chairs
+  for (let i = 0; i < 4; i++) put('indoor', 4 + i, 6, x + t(6 + i), y + t(6)) // sofa
+  const desk = { x: x + t(3), y: y + t(3), w: t(3), h: t(1) }
+  const visitors = [3, 5]
+  for (const c of visitors) put('indoor', 1, 2, x + t(c), y + t(5)) // chairs, seen from behind
+  return {
+    ...a,
+    seniorDesks: [desk],
+    seniorSeats: [{ x: x + t(4) + 8, y: y + t(2) + 13 }],
+    juniorDesks: visitors.map(() => desk),
+    juniorSeats: visitors.map((c) => ({ x: x + t(c) + 8, y: y + t(5) + 13 })),
+    board: { x: x + t(7) + 8, y: a.aisles[0] },
+    cabinet: { x: x + t(1) + 8, y: a.aisles[0] },
+    boardRect: { x: x + t(6), y, w: t(3), h: t(1) },
+    cabinetRect: { x, y, w: t(3), h: t(1) },
+    plate: { x: x + 32, y: wallBand(a), w: a.rect.w - 64, h: FIXTURE_H },
+    clipboard: { x: x + 14, y: wallBand(a), w: 0, h: 0 }, // no to-do list on the boss's wall
+    look: { floor: 'executive', tone: 0, mirror: false, decor: 0 },
+  }
+}
+
+/** Sits facing the room instead of a screen: only the boss, behind the desk. */
+export function facesRoom(pod: Pick<Pod, 'kind'> | null, senior: boolean) {
+  return pod?.kind === 'boss' && senior
 }
 
 /** The top of the strip of back wall where a room's plates and clocks hang. Top-row rooms use the office wall. */
@@ -388,9 +446,9 @@ export function wallBand(a: Pick<Area, 'rect' | 'cell'>) {
   return a.cell.r > 0 ? a.rect.y - ROOM_FACE + 2 : a.rect.y - ROOM_WALL - FIXTURE_H - 1
 }
 
-/** Every room on the floor: the hub, then the project areas. */
+/** Every room on the floor: the hub, the project areas, then the boss's office. */
 export function rooms(office: Office): Area[] {
-  return [office.hub, ...office.pods]
+  return [office.hub, ...office.pods, office.boss]
 }
 
 export function roomById(office: Office, id: string): Area | null {
@@ -439,7 +497,7 @@ export function neighbor(office: Office, id: string, dir: Facing): Area | null {
 
 /** The area a point is in, if any. */
 export function areaAt(office: Office, p: Point): Area | null {
-  for (const a of [...office.pods, office.hub]) {
+  for (const a of [...office.pods, office.hub, office.boss]) {
     const r = a.rect
     if (p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h) return a
   }

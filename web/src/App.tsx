@@ -17,7 +17,7 @@ import { PromptBar, type PromptTarget, type SendOptions } from './components/Pro
 import { OTHER, WorldModel } from './world/model'
 import { Extras } from './world/extras'
 import { PreviewPanel } from './components/PreviewPanel'
-import { HUB } from './world/office'
+import { BOSS, HUB } from './world/office'
 import { PixelIcon } from './components/PixelIcon'
 import { KeyPanel } from './components/KeyPanel'
 import { ClipboardPanel } from './components/ClipboardPanel'
@@ -310,7 +310,7 @@ export function App() {
   activeRef.current = active
   const enterRoom = useCallback((id: string | null) => {
     setRoom(id)
-    if (id && id !== HUB && id !== OTHER) {
+    if (id && id !== HUB && id !== OTHER && id !== BOSS) {
       setFocus(id)
       setPromptFocus((n) => n + 1)
       // Someone from another project stops being the one you talk to.
@@ -347,6 +347,7 @@ export function App() {
             : h.key === 'accounts' ? { kind: 'usage', projectId: null }
               : h.key === 'clock' || h.key === 'limits' ? { kind: 'limits' }
                 : h.key === 'notice' ? { kind: 'key' }
+                  : h.key === 'reports' ? { kind: 'reports' }
                   : { kind: 'log' },
         )
         break
@@ -508,9 +509,10 @@ export function App() {
     { id: HUB, label: 'Hub' },
     ...projects.filter((p) => p.enabled).map((p) => ({ id: p.id, label: p.name })),
     { id: OTHER, label: 'Other folders' },
+    { id: BOSS, label: "Boss's office" },
   ]
   // The clipboard of the room you are in, or of the project the prompt box sends to.
-  const clipFor = room && room !== HUB ? room : focus
+  const clipFor = room && room !== HUB && room !== BOSS ? room : focus
   const services: { label: string; open: () => void }[] = [
     { label: 'Reception: projects', open: () => setWin({ kind: 'projects' }) },
     { label: 'Accounts: usage', open: () => setWin({ kind: 'usage', projectId: null }) },
