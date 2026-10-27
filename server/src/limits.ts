@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { CLAUDE_CREDENTIALS, CLAUDE_STATE } from './config.js'
-import { run } from './db.js'
+import { get, run } from './db.js'
 import { bus } from './bus.js'
 
 // Plan limits come from three places, newest wins:
@@ -96,8 +96,21 @@ async function fetchUsage(): Promise<number> {
   return POLL_MS
 }
 
+/**
+ * Whether a new reading should replace the one on show. Newest wins, except
+ * that a status line post doesn't beat a recent answer from the endpoint: the
+ * status line repeats whatever its session last heard, which can be older than
+ * the endpoint's answer even though it arrives later.
+ */
+export function shouldTake(cur: Limits | null, next: Limits, now: number): boolean {
+  if (!cur) return true
+  if (next.fetchedAt <= cur.fetchedAt) return false
+  if (next.source === 'statusline' && cur.source === 'api' && now - cur.fetchedAt < 2 * POLL_MS) return false
+  return true
+}
+
 function accept(next: Limits) {
-  if (current && next.fetchedAt <= current.fetchedAt) return
+  if (!shouldTake(current, next, Date.now())) return
   // Status line posts only carry the two main windows; keep the rest.
   current = current ? { ...current, ...Object.fromEntries(Object.entries(next).filter(([, v]) => v != null && !(Array.isArray(v) && !v.length))) } as Limits : next
   run(
@@ -131,7 +144,18 @@ export function acceptStatusLine(rl: StatusRateLimits | undefined) {
   } as Limits)
 }
 
+/** The last reading HQ saved, so a restart doesn't fall back to an older copy. */
+function readSaved(): Limits | null {
+  try {
+    const row = get<{ raw: string | null }>('SELECT raw FROM limits ORDER BY fetched_at DESC LIMIT 1')
+    return row?.raw ? (JSON.parse(row.raw) as Limits) : null
+  } catch {
+    return null
+  }
+}
+
 export function startLimits() {
+  current = readSaved()
   const first = readCache()
   if (first) accept(first)
   // ~/.claude.json is rewritten in place by Claude Code; polling the mtime is the reliable way to see it.

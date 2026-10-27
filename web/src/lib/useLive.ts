@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { LiveEvent, Limits } from './api'
+import { api, type LiveEvent, type Limits } from './api'
 
 // One websocket to the HQ server, reconnecting with backoff.
 export function useLive(onEvent: (ev: LiveEvent) => void) {
@@ -39,9 +39,21 @@ export function useLive(onEvent: (ev: LiveEvent) => void) {
       }
     }
     open()
+    // A hidden tab can miss updates or lose its socket without noticing; catch up when it's back.
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      if (!ws || ws.readyState === WebSocket.CLOSED) {
+        clearTimeout(timer)
+        delay = 500
+        open()
+      }
+      api.limits().then((l) => l && setLimits(l)).catch(() => {})
+    }
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       stopped = true
       clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
       ws?.close()
     }
   }, [])
