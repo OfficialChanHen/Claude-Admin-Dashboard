@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import { all, run } from './db.js'
 import { currentBudget } from './budget.js'
-import { adoptTask, startPrompt, PERMISSION_MODES, type PermissionMode } from './prompt.js'
+import { adoptTask, startPrompt, MODELS, PERMISSION_MODES, type Model, type PermissionMode } from './prompt.js'
 import { isRunning } from './stop.js'
 
 // When HQ comes back up, it looks at each task it started that never ended.
@@ -45,6 +45,7 @@ type OpenTask = {
   project_id: string | null
   cwd: string
   permission_mode: string
+  model: string | null
   pid: number | null
   recovered: number
   started_at: number
@@ -56,7 +57,7 @@ type OpenTask = {
 /** Checks the tasks started before `bootAt` that never ended. */
 export function recoverTasks(bootAt: number, now = Date.now()) {
   const open = all<OpenTask>(
-    `SELECT t.id, t.session_id, t.project_id, t.cwd, t.permission_mode, t.pid, t.recovered, t.started_at, s.state,
+    `SELECT t.id, t.session_id, t.project_id, t.cwd, t.permission_mode, t.model, t.pid, t.recovered, t.started_at, s.state,
        EXISTS (SELECT 1 FROM roles r WHERE r.session_id = t.session_id) role,
        EXISTS (SELECT 1 FROM paused p WHERE p.session_id = t.session_id AND p.resumed_at IS NULL) paused
      FROM tasks t LEFT JOIN sessions s ON s.id = t.session_id
@@ -91,7 +92,8 @@ export function recoverTasks(bootAt: number, now = Date.now()) {
     run('UPDATE tasks SET ended_at = ? WHERE id = ?', now, t.id)
     if (decision === 'resume' && fs.existsSync(t.cwd)) {
       const permissionMode = PERMISSION_MODES.includes(t.permission_mode as PermissionMode) ? (t.permission_mode as PermissionMode) : 'acceptEdits'
-      startPrompt({ projectId: t.project_id ?? '', text: RECOVER_TEXT, mode: 'continue', permissionMode }, t.cwd, t.session_id, { recovered: true })
+      const model = MODELS.includes(t.model as Model) ? { model: t.model as Model } : {}
+      startPrompt({ projectId: t.project_id ?? '', text: RECOVER_TEXT, mode: 'continue', permissionMode, ...model }, t.cwd, t.session_id, { recovered: true })
       out.resumed++
     } else out.left++
   }

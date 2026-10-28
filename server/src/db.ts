@@ -200,6 +200,16 @@ try {
   // already there
 }
 
+// The model a prompt picked, so a queued or resumed task runs on it too.
+// Empty means your usual Claude Code model.
+for (const table of ['queue', 'tasks']) {
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN model TEXT`)
+  } catch {
+    // already there
+  }
+}
+
 export type Row = Record<string, unknown>
 
 export function all<T = Row>(sql: string, ...params: unknown[]): T[] {

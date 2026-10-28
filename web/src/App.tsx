@@ -503,7 +503,7 @@ export function App() {
   const send = async (text: string, opts: SendOptions) => {
     if (selected) return void (await api.prompt({ projectId: chatSession?.projectId ?? '', sessionId: selected, text, ...opts }))
     if (!focus) return
-    if (chatting) return void (await api.prompt({ projectId: '', chat: true, text, mode: opts.mode, permissionMode: opts.permissionMode }))
+    if (chatting) return void (await api.prompt({ projectId: '', chat: true, text, mode: opts.mode, permissionMode: opts.permissionMode, model: opts.model }))
     await api.prompt({ projectId: focus, text, ...opts })
   }
 

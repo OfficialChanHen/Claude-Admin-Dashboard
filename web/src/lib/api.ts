@@ -144,7 +144,7 @@ export const api = {
   limits: () => req<Limits | null>('/api/limits'),
   git: () => req<GitInfo[]>('/api/git'),
   previews: () => req<Preview[]>('/api/previews'),
-  prompt: (body: { projectId: string; sessionId?: string; chat?: boolean; text: string; mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan'; when?: 'now' | 'spare' }) =>
+  prompt: (body: { projectId: string; sessionId?: string; chat?: boolean; text: string; mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan'; when?: 'now' | 'spare'; model?: 'fable' | 'opus' | 'sonnet' | 'haiku' }) =>
     req<{ ok: true; resumed?: string | null; queued?: string }>('/api/prompt', { method: 'POST', body: JSON.stringify(body) }),
   budget: () => req<Budget>('/api/budget'),
   hierarchy: () => req<Hierarchy>('/api/hierarchy'),

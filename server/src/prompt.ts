@@ -14,13 +14,17 @@ import { promptToolArgs } from './mcp.js'
 export const PERMISSION_MODES = ['acceptEdits', 'default', 'plan'] as const
 export type PermissionMode = (typeof PERMISSION_MODES)[number]
 export type PromptMode = 'new' | 'continue'
+// The CLI's short names, so a prompt keeps working as new versions come out.
+// Without one, a prompt runs on your usual Claude Code model.
+export const MODELS = ['fable', 'opus', 'sonnet', 'haiku'] as const
+export type Model = (typeof MODELS)[number]
 
-export type PromptBody = { projectId?: unknown; sessionId?: unknown; chat?: unknown; text?: unknown; mode?: unknown; permissionMode?: unknown }
+export type PromptBody = { projectId?: unknown; sessionId?: unknown; chat?: unknown; text?: unknown; mode?: unknown; permissionMode?: unknown; model?: unknown }
 /**
  * `sessionId` sends the prompt to that one session, carrying on its conversation.
  * `chat` is a chat about no project, in HQ's chat folder.
  */
-export type PromptRequest = { projectId: string; sessionId?: string; chat?: true; text: string; mode: PromptMode; permissionMode: PermissionMode }
+export type PromptRequest = { projectId: string; sessionId?: string; chat?: true; text: string; mode: PromptMode; permissionMode: PermissionMode; model?: Model }
 
 const MAX_PROMPT = 20_000
 
@@ -36,7 +40,8 @@ export function parsePrompt(body: PromptBody): PromptRequest | { error: string }
   const mode: PromptMode = sessionId || body.mode === 'continue' ? 'continue' : 'new'
   // A chat has no files of its own to edit, so anything beyond reading asks you first.
   const permissionMode = chat ? 'default' : PERMISSION_MODES.includes(body.permissionMode as PermissionMode) ? (body.permissionMode as PermissionMode) : 'acceptEdits'
-  return { projectId, ...(sessionId ? { sessionId } : {}), ...(chat ? { chat: true as const } : {}), text, mode, permissionMode }
+  const model = MODELS.includes(body.model as Model) ? (body.model as Model) : undefined
+  return { projectId, ...(sessionId ? { sessionId } : {}), ...(chat ? { chat: true as const } : {}), text, mode, permissionMode, ...(model ? { model } : {}) }
 }
 
 /**
@@ -60,6 +65,7 @@ export function sessionTarget(
  */
 export function claudeArgs(req: PromptRequest, resumeId: string | null, newId?: string, extra: string[] = []) {
   const args = ['-p', '--permission-mode', req.permissionMode, ...extra]
+  if (req.model) args.push('--model', req.model)
   const resuming = req.mode === 'continue' ? resumeId : null
   if (resuming) args.push('--resume', resuming)
   // A new session gets an id up front, so HQ knows which process to stop for it.
@@ -146,8 +152,8 @@ export function startPrompt(
   const taskId = randomUUID()
   const now = Date.now()
   run(
-    'INSERT INTO tasks (id, session_id, project_id, cwd, permission_mode, pid, recovered, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    taskId, sessionId, req.projectId || null, cwd, req.permissionMode, child.pid ?? null, opts.recovered ? 1 : 0, now,
+    'INSERT INTO tasks (id, session_id, project_id, cwd, permission_mode, model, pid, recovered, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    taskId, sessionId, req.projectId || null, cwd, req.permissionMode, req.model ?? null, child.pid ?? null, opts.recovered ? 1 : 0, now,
   )
   const done = track(taskId, sessionId, child.pid, req.projectId, cwd, now, opts.onExit)
   child.on('exit', done)

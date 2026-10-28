@@ -3,7 +3,11 @@ import type { Project } from '../lib/api'
 import { PixelIcon } from './PixelIcon'
 import { zoneColor } from './ProjectsPanel'
 
-export type SendOptions = { mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan'; when: 'now' | 'spare' }
+export type SendOptions = { mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan'; when: 'now' | 'spare'; model?: Model }
+
+// Default leaves the model to your usual Claude Code setting.
+const MODELS = [['default', 'Default'], ['fable', 'Fable'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']] as const
+type Model = Exclude<(typeof MODELS)[number][0], 'default'>
 
 function stored<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   try {
@@ -47,6 +51,7 @@ export function PromptBar({
   const [text, setText] = useState('')
   const [mode, setMode] = useState<SendOptions['mode']>(() => stored('hq.prompt.mode', ['new', 'continue'] as const, 'new'))
   const [perm, setPerm] = useState<SendOptions['permissionMode']>(() => stored('hq.prompt.perm', ['acceptEdits', 'plan'] as const, 'acceptEdits'))
+  const [model, setModel] = useState<(typeof MODELS)[number][0]>(() => stored('hq.prompt.model', MODELS.map(([k]) => k), 'default'))
   // Spare usage waits for the last half hour before a reset, as a new task.
   const [when, setWhen] = useState<SendOptions['when']>('now')
   const [busy, setBusy] = useState(false)
@@ -77,7 +82,7 @@ export function PromptBar({
     setBusy(true)
     setNote(null)
     try {
-      await onSend(t, { mode: target ? 'continue' : sendWhen === 'spare' ? 'new' : mode, permissionMode: perm, when: sendWhen })
+      await onSend(t, { mode: target ? 'continue' : sendWhen === 'spare' ? 'new' : mode, permissionMode: perm, when: sendWhen, ...(model === 'default' ? {} : { model }) })
       setText('')
       setNote({
         text: target
@@ -153,6 +158,21 @@ export function PromptBar({
             </button>
           ))}
         </div>}
+        <div className="seg" role="group" aria-label="Model">
+          {MODELS.map(([k, l]) => (
+            <button
+              type="button"
+              key={k}
+              aria-pressed={model === k}
+              onClick={() => {
+                setModel(k)
+                store('hq.prompt.model', k)
+              }}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
         <button type="button" className="icon-btn" aria-label={target ? `Stop talking to ${name}` : chat ? 'Stop chatting' : 'Stop prompting this project'} onClick={onClear}><PixelIcon name="close" size={12} /></button>
       </div>
       <div className="prompt-row">

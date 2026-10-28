@@ -161,7 +161,7 @@ app.post('/api/prompt', async (req, reply) => {
   if (!fs.existsSync(project.path)) return reply.code(400).send({ error: 'That project folder is gone.' })
   // "When usage is spare": waits for the last half hour before a reset.
   if ((req.body as { when?: unknown })?.when === 'spare') {
-    return { ok: true, queued: queuePrompt(parsed.projectId, parsed.text, parsed.permissionMode) }
+    return { ok: true, queued: queuePrompt(parsed.projectId, parsed.text, parsed.permissionMode, parsed.model) }
   }
   try {
     const { resumed } = startPrompt(parsed, project.path)

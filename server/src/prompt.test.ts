@@ -47,6 +47,13 @@ describe('parsePrompt', () => {
   it('sends to the session you picked even from a chat', () => {
     expect(parsePrompt({ chat: true, sessionId: 's', text: 'x' })).not.toHaveProperty('chat')
   })
+
+  it('keeps the model you picked, and leaves out one it does not know', () => {
+    expect(parsePrompt({ projectId: 'p', text: 'x', model: 'haiku' })).toMatchObject({ model: 'haiku' })
+    expect(parsePrompt({ chat: true, text: 'x', model: 'opus' })).toMatchObject({ model: 'opus' })
+    expect(parsePrompt({ projectId: 'p', text: 'x', model: '--dangerously-skip-permissions' })).not.toHaveProperty('model')
+    expect(parsePrompt({ projectId: 'p', text: 'x' })).not.toHaveProperty('model')
+  })
 })
 
 describe('sessionTarget', () => {
@@ -80,6 +87,11 @@ describe('claudeArgs', () => {
     expect(claudeArgs({ ...req, mode: 'continue' }, 'sess-1').slice(0, 5)).toEqual(['-p', '--permission-mode', 'acceptEdits', '--resume', 'sess-1'])
     expect(claudeArgs({ ...req, mode: 'continue' }, null)).not.toContain('--resume')
     expect(claudeArgs(req, 'sess-1')).not.toContain('--resume')
+  })
+
+  it('runs on the model you picked, or your usual one when you picked none', () => {
+    expect(claudeArgs({ ...req, model: 'sonnet' }, null)).toEqual(['-p', '--permission-mode', 'acceptEdits', '--model', 'sonnet'])
+    expect(claudeArgs(req, null)).not.toContain('--model')
   })
 
   it('names a new session up front, so it can be stopped later', () => {

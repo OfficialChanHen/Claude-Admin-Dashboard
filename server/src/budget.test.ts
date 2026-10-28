@@ -5,7 +5,7 @@ vi.mock('./db.js', () => ({ all: vi.fn(() => []), get: vi.fn(), run: vi.fn(() =>
 vi.mock('./bus.js', () => ({ bus: { publish: vi.fn(), on: vi.fn() } }))
 vi.mock('./limits.js', () => ({ getLimits: vi.fn(() => null) }))
 vi.mock('./projects.js', () => ({ listProjects: vi.fn(() => []) }))
-vi.mock('./prompt.js', () => ({ PERMISSION_MODES: ['acceptEdits', 'default', 'plan'], runningPrompts: vi.fn(() => []), startPrompt: vi.fn() }))
+vi.mock('./prompt.js', () => ({ PERMISSION_MODES: ['acceptEdits', 'default', 'plan'], MODELS: ['fable', 'opus', 'sonnet', 'haiku'], runningPrompts: vi.fn(() => []), startPrompt: vi.fn() }))
 vi.mock('./config.js', () => ({
   ACTIVE_WINDOW_MS: 600_000,
   BUDGET: { on: true, guard: true, wrapAt: 80, stopAt: 85, spareMs: 30 * 60_000, spareWrapAt: 95, spareStopAt: 99 },
@@ -139,6 +139,15 @@ describe('runQueued', async () => {
     expect(startPrompt).toHaveBeenCalledWith({ projectId: 'p', text: 'do a', mode: 'new', permissionMode: 'plan' }, process.cwd())
     expect(db.run).toHaveBeenCalledWith(expect.stringContaining('started_at'), NOW, 'b')
     expect(hq.governor.pilot.has('sess-a')).toBe(false)
+  })
+
+  it('starts a queued task on the model it was queued with', () => {
+    vi.mocked(listProjects).mockReturnValue([{ id: 'p', path: process.cwd() }] as never)
+    vi.mocked(db.all).mockReturnValueOnce([{ ...task('a', 'p'), model: 'haiku' }, { ...task('b', 'p'), model: 'bogus' }] as never)
+    vi.mocked(startPrompt).mockReturnValue({ sessionId: 'sess-a' } as never)
+    hq.runQueued(undefined, NOW)
+    expect(startPrompt).toHaveBeenCalledWith({ projectId: 'p', text: 'do a', mode: 'new', permissionMode: 'plan', model: 'haiku' }, process.cwd())
+    expect(startPrompt).toHaveBeenCalledWith({ projectId: 'p', text: 'do b', mode: 'new', permissionMode: 'plan' }, process.cwd())
   })
 
   it('finds nothing when the task already started', () => {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 // The recovery module reads the database and starts prompts; tests use stand-ins.
 vi.mock('./db.js', () => ({ all: vi.fn(() => []), get: vi.fn(), run: vi.fn(() => ({ changes: 0 })) }))
-vi.mock('./prompt.js', () => ({ adoptTask: vi.fn(), startPrompt: vi.fn(), PERMISSION_MODES: ['acceptEdits', 'default', 'plan'] }))
+vi.mock('./prompt.js', () => ({ adoptTask: vi.fn(), startPrompt: vi.fn(), PERMISSION_MODES: ['acceptEdits', 'default', 'plan'], MODELS: ['fable', 'opus', 'sonnet', 'haiku'] }))
 vi.mock('./stop.js', () => ({ isRunning: vi.fn(() => false) }))
 vi.mock('./budget.js', () => ({ currentBudget: vi.fn(() => ({ phase: 'ok' })) }))
 
@@ -48,5 +48,18 @@ describe('decideRecovery', () => {
   it('resumes nothing while the 5 hour budget is holding work back', () => {
     expect(decideRecovery({ ...cutOff, paused: true }, NOW)).toBe('leave')
     expect(decideRecovery({ ...cutOff, budgetOk: false }, NOW)).toBe('leave')
+  })
+})
+
+describe('recoverTasks', async () => {
+  const db = await import('./db.js')
+  const { startPrompt } = await import('./prompt.js')
+  const { recoverTasks } = await import('./recover.js')
+  const open = { id: 't', session_id: 's', project_id: 'p', cwd: process.cwd(), permission_mode: 'plan', pid: null, recovered: 0, started_at: NOW - 3600_000, state: 'working', role: 0, paused: 0 }
+
+  it('resumes a cut off task on the model it was started with', () => {
+    vi.mocked(db.all).mockReturnValueOnce([{ ...open, model: 'opus' }] as never)
+    recoverTasks(NOW, NOW)
+    expect(startPrompt).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: 'plan', model: 'opus' }), process.cwd(), 's', { recovered: true })
   })
 })
