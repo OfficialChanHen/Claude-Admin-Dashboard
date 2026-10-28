@@ -78,10 +78,6 @@ describe('buildOffice', () => {
     }
     expect(onWall(o.facilities.find((f) => f.key === 'clock')!.rect, o.hub)).toBe(true)
     for (const p of o.pods) expect(onWall(p.plate, p)).toBe(true)
-    for (const p of o.pods) {
-      expect(onWall(p.clipboard, p)).toBe(true)
-      expect(overlaps(p.clipboard, p.plate)).toBe(false)
-    }
     for (const a of rooms(o)) expect(wallBand(a)).toBeGreaterThanOrEqual(0)
   })
 
@@ -264,23 +260,24 @@ describe('rooms', () => {
   })
 
   it('skips a gap to the nearest room that way', () => {
-    // Eight projects, the hub and the boss on a 4 by 3 grid: the boss has the
-    // top right corner and rooms fill outward from the hub at (1, 1), so the
-    // last two cells on the bottom row stay empty.
+    // Eight projects, the hub and the boss on a 4 by 3 grid: the boss is next
+    // to the hub at (1, 1) and rooms fill outward from it, so the far corners
+    // of the last column stay empty.
     const big = buildOffice(infos(8))
     expect(big.grid).toEqual({ cols: 4, rows: 3 })
     const at = (c: number, r: number) => rooms(big).find((a) => a.cell.c === c && a.cell.r === r)
-    expect(at(3, 0)?.id).toBe(BOSS)
-    expect(at(2, 2)).toBeUndefined()
+    expect(at(2, 1)?.id).toBe(BOSS)
+    expect(at(3, 0)).toBeUndefined()
     expect(at(3, 2)).toBeUndefined()
-    expect(neighbor(big, at(3, 1)!.id, 'down')?.cell).toEqual({ c: 1, r: 2 })
-    expect(neighbor(big, at(1, 2)!.id, 'right')?.cell).toEqual({ c: 2, r: 1 })
+    expect(neighbor(big, at(2, 0)!.id, 'right')?.cell).toEqual({ c: 3, r: 1 })
+    expect(neighbor(big, at(2, 2)!.id, 'right')?.cell).toEqual({ c: 3, r: 1 })
     expect(neighbor(big, at(3, 1)!.id, 'right')).toBeNull()
   })
 
-  it.each([0, 3, 12])('gives the boss a corner office of their own, with %i projects', (n) => {
+  it.each([0, 1, 3, 8, 12, 30])('always gives the boss an office of their own next to the hub, with %i projects', (n) => {
     const o = buildOffice(infos(n))
-    expect(o.boss.cell).toEqual({ c: o.grid.cols - 1, r: 0 })
+    expect(o.boss.cell).toEqual({ c: o.hub.cell.c + 1, r: o.hub.cell.r })
+    expect(o.boss.cell.c).toBeLessThan(o.grid.cols)
     for (const a of [o.hub, ...o.pods]) expect(overlaps(outerRect(a), outerRect(o.boss))).toBe(false)
     // One chair behind the desk, two across it, and a plate on the back wall.
     expect(o.boss.seniorSeats).toHaveLength(1)

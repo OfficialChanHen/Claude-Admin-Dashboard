@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Camera } from './camera'
 import { buildOffice, TILE } from './office'
 import { WorldModel, type Sprite } from './model'
-import { ART, doorAt, hitFloor, hitRect, hitTest, isGreyHair, lampFor, lookOf, roleTag, swapColors, BOSS, MANAGER, SENIORS, JUNIORS, podCenter, podStatus, sameHit, skyAt, darkness, LAMPS_ON, statusText, wrap, type Frame } from './render'
+import { ART, doorAt, hitFloor, hitRect, hitTest, isGreyHair, lampFor, lookOf, roleTag, swapColors, BOSS, MANAGER, SENIORS, JUNIORS, YOU, podCenter, podStatus, sameHit, skyAt, darkness, LAMPS_ON, statusText, wrap, type Frame } from './render'
 
 const office = buildOffice([
   { id: 'a', name: 'Alpha' },
@@ -203,12 +203,6 @@ describe('things on the walls', () => {
     expect(hitRect(office, { kind: 'plaque', podId: 'a', label: 'Alpha' })).toEqual(alpha.plate)
   })
 
-  it('opens a room’s clipboard from the wall beside its name plate', () => {
-    const hit = { kind: 'clipboard', podId: 'a', label: 'Alpha clipboard' } as const
-    expect(hitFloor(office, alpha.clipboard.x + 4, alpha.clipboard.y + 5)).toEqual(hit)
-    expect(hitRect(office, hit)).toEqual(alpha.clipboard)
-  })
-
   it('lights the lamp by how the room is doing', () => {
     expect(lampFor({ waiting: 1, working: 1, open: 2, juniors: 0 })).toEqual({ color: ART.lampRed, blink: true })
     expect(lampFor({ waiting: 0, working: 1, open: 1, juniors: 0 }).color).toBe(ART.lampGreen)
@@ -266,6 +260,14 @@ describe('lookOf', () => {
     expect([...agents].sort()).toEqual([...SENIORS].sort())
     expect([...helpers].sort()).toEqual([...JUNIORS].sort())
     for (const a of agents) expect([BOSS, MANAGER, ...JUNIORS]).not.toContain(a)
+  })
+
+  it('keeps your look in the chat for you alone', () => {
+    for (const role of ['boss', 'manager', null] as const) {
+      for (const rank of ['senior', 'junior'] as const) {
+        for (const seed of [0, 1, 2, 3]) expect(lookOf({ rank, role, seed })).not.toBe(YOU)
+      }
+    }
   })
 })
 

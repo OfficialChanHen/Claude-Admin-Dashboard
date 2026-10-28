@@ -36,6 +36,17 @@ describe('parsePrompt', () => {
     expect(parsePrompt({ projectId: 'p', sessionId: 's', text: 'x' })).toMatchObject({ projectId: 'p', sessionId: 's', mode: 'continue' })
     expect(parsePrompt({ projectId: 'p', text: 'x' })).not.toHaveProperty('sessionId')
   })
+
+  it('starts a chat about no project, which asks before doing anything', () => {
+    expect(parsePrompt({ chat: true, text: 'hi' })).toEqual({ projectId: '', chat: true, text: 'hi', mode: 'new', permissionMode: 'default' })
+    expect(parsePrompt({ chat: true, projectId: 'p', text: 'x', permissionMode: 'acceptEdits', mode: 'continue' })).toMatchObject({ projectId: '', mode: 'continue', permissionMode: 'default' })
+    expect(parsePrompt({ chat: 'yes', text: 'x' })).toEqual({ error: 'Pick a project first.' })
+    expect(parsePrompt({ projectId: 'p', text: 'x' })).not.toHaveProperty('chat')
+  })
+
+  it('sends to the session you picked even from a chat', () => {
+    expect(parsePrompt({ chat: true, sessionId: 's', text: 'x' })).not.toHaveProperty('chat')
+  })
 })
 
 describe('sessionTarget', () => {

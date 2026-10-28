@@ -40,6 +40,16 @@ export function isClaude(args: string[] | null) {
   return /(^|[/\s])claude(\.exe|\.js)?($|\s)|claude-code|@anthropic-ai/.test(head)
 }
 
+/** Is this the claude process HQ started for that session? Its command line names the session. */
+export function runsSession(args: string[] | null, sessionId: string) {
+  return isClaude(args) && args!.includes(sessionId)
+}
+
+/** Is the process HQ started for a session still running? */
+export function isRunning(pid: number, sessionId: string) {
+  return Number.isInteger(pid) && pid > 1 && runsSession(cmdline(pid), sessionId)
+}
+
 /** Picks the process for a session from the running claude processes. */
 export function pickProcess(
   sessionId: string,

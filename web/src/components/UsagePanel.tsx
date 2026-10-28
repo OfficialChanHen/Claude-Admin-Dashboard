@@ -194,22 +194,24 @@ export function UsagePanel({
             {data.byTool.length > 0 && (
               <div className="section">
                 <h3>By action</h3>
-                <table className="t">
-                  <thead>
-                    <tr><th>Action</th><th className="num">Times</th><th className="num">Written</th><th className="num">Results</th><th className="num">Value</th></tr>
-                  </thead>
-                  <tbody>
-                    {data.byTool.slice(0, 10).map((x) => (
-                      <tr key={x.tool} title={x.avgMs != null ? `Takes ${duration(Math.round(x.avgMs))} on average${x.errors ? `, failed ${x.errors} times` : ''}` : undefined}>
-                        <td>{x.tool}</td>
-                        <td className="num">{x.count}</td>
-                        <td className="num">{tokens(x.outputTokens)}</td>
-                        <td className="num">{tokens(x.resultTokens)}</td>
-                        <td className="num">{usd(x.cost)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="table-scroll">
+                  <table className="t">
+                    <thead>
+                      <tr><th>Action</th><th className="num">Times</th><th className="num">Written</th><th className="num">Results</th><th className="num">Value</th></tr>
+                    </thead>
+                    <tbody>
+                      {data.byTool.slice(0, 10).map((x) => (
+                        <tr key={x.tool} title={x.avgMs != null ? `Takes ${duration(Math.round(x.avgMs))} on average${x.errors ? `, failed ${x.errors} times` : ''}` : undefined}>
+                          <td>{x.tool}</td>
+                          <td className="num">{x.count}</td>
+                          <td className="num">{tokens(x.outputTokens)}</td>
+                          <td className="num">{tokens(x.resultTokens)}</td>
+                          <td className="num">{usd(x.cost)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
                 <p className="note">Per-action numbers are estimates. When Claude does several things in one reply, the reply’s tokens are split between them.</p>
               </div>
             )}

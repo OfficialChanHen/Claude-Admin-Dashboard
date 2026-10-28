@@ -51,8 +51,6 @@ export type Pod = Area & {
   cabinetRect: Rect
   /** The name plate on the back wall, with a lamp that shows how the room is doing. */
   plate: Rect
-  /** The clipboard hung left of the name plate: your to-do items and Claude's plans. */
-  clipboard: Rect
   look: Look
 }
 
@@ -132,7 +130,7 @@ export type Office = {
   grid: { cols: number; rows: number }
   pods: Pod[]
   hub: Area
-  /** The boss's corner office: one long desk, and two chairs across it for whoever reports in. */
+  /** The boss's office, next to the hub: one long desk, and two chairs across it for whoever reports in. */
   boss: Pod
   facilities: Facility[]
   breakSpots: BreakSpot[]
@@ -202,8 +200,9 @@ const DECOR: { kind: DecorKind; c: number; r: number }[][] = [
 export function buildOffice(infos: PodInfo[]): Office {
   const grid = gridFor(infos.length + 1)
   const hubCell = { c: Math.floor((grid.cols - 1) / 2), r: Math.floor((grid.rows - 1) / 2) }
-  // The boss has the corner office: top right, along the back wall.
-  const bossCell = { c: grid.cols - 1, r: 0 }
+  // The boss's office is next door to the hub, on its right. The hub is never in
+  // the last column, so there is always room for it.
+  const bossCell = { c: hubCell.c + 1, r: hubCell.r }
   const cellOrigin = (c: number, r: number) => ({ x: t(EDGE + c * CELL_W), y: t(WALL + r * CELL_H) })
 
   // Nearest cells to the hub first, so the first projects sit closest.
@@ -272,7 +271,6 @@ export function buildOffice(infos: PodInfo[]): Office {
       boardRect: { x: x + t(bc), y, w: t(3), h: t(1) },
       cabinetRect: { x: x + t(mx(8, 2)), y, w: t(2), h: t(1) },
       plate: { x: x + 32, y: wallBand(a), w: a.rect.w - 64, h: FIXTURE_H },
-      clipboard: { x: x + 14, y: wallBand(a), w: 9, h: FIXTURE_H },
       look,
     }
   })
@@ -431,7 +429,6 @@ function bossOffice(a: Area, put: (sheet: Sheet, c: number, r: number, x: number
     boardRect: { x: x + t(6), y, w: t(3), h: t(1) },
     cabinetRect: { x, y, w: t(3), h: t(1) },
     plate: { x: x + 32, y: wallBand(a), w: a.rect.w - 64, h: FIXTURE_H },
-    clipboard: { x: x + 14, y: wallBand(a), w: 0, h: 0 }, // no to-do list on the boss's wall
     look: { floor: 'executive', tone: 0, mirror: false, decor: 0 },
   }
 }

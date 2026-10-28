@@ -44,6 +44,13 @@ busy. "Can edit" lets it edit files without asking; "Plan only" makes it plan
 and change nothing. There is no option to skip permissions. Startup errors go to
 `data/prompts.log`.
 
+To chat about something that isn't any project, click Other folders. The
+prompt box there starts a chat in its own folder, `~/.claude-hq/chat` (or
+`HQ_CHAT_DIR`), outside this repo and every project, so it reads none of their
+files. "New chat" starts one; "Continue last" carries on the latest. A chat
+can't edit files without asking: anything beyond reading is asked in HQ. The
+person who sits down in Other folders is your chat; click them to read it.
+
 Claude Code doesn't title sessions started this way, so HQ names each one after
 its first prompt ("Fix the login redirect"), and the office, the panels and the
 managers' reports use that name instead of a session id. A helper is called by
@@ -109,7 +116,8 @@ else (actions, replies, tokens) comes from the session logs without them.
 ## The 5 hour budget
 
 With the hooks installed and HQ running, HQ watches the 5 hour limit for
-every session on this machine:
+every session on this machine. The wrap-up and stop below are off for now;
+set `HQ_GUARD=on` to bring them back.
 
 - At 80%, each working session is told once to finish the step it is on,
   leave the work in a state that builds, and list what is left.

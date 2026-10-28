@@ -22,6 +22,16 @@ export function ProjectEditor({ p, onDone }: { p: Project; onDone: () => void })
   const [prodUrl, setProdUrl] = useState(p.prodUrl ?? '')
   const [devPort, setDevPort] = useState(p.devPort ? String(p.devPort) : '')
   const [confirm, setConfirm] = useState(false)
+  const [vscodeError, setVscodeError] = useState('')
+
+  const openInVsCode = async () => {
+    setVscodeError('')
+    try {
+      await api.openInVsCode(p.id)
+    } catch (e) {
+      setVscodeError((e as Error).message)
+    }
+  }
 
   const save = async () => {
     await api.updateProject(p.id, {
@@ -64,8 +74,10 @@ export function ProjectEditor({ p, onDone }: { p: Project; onDone: () => void })
           </button>
         ))}
       </div>
+      {vscodeError && <div role="alert" className="chip err">{vscodeError}</div>}
       <div className="row">
         <button className="btn small primary" onClick={save}>Save</button>
+        <button className="btn small" onClick={openInVsCode}>VS Code</button>
         {p.github && (
           <a className="btn small" href={`https://github.com/${p.github}`} target="_blank" rel="noreferrer">GitHub</a>
         )}

@@ -14,6 +14,10 @@ export const DATA_DIR = path.join(ROOT, 'data')
 export const DB_PATH = path.join(DATA_DIR, 'hq.db')
 export const WEB_DIST = path.join(ROOT, 'web', 'dist')
 
+// Where a chat about no project runs. It is outside this repo and every
+// project, so the chat picks up none of their files, settings or git state.
+export const CHAT_DIR = process.env.HQ_CHAT_DIR ?? path.join(HOME, '.claude-hq', 'chat')
+
 export const CLAUDE_DIR = path.join(HOME, '.claude')
 export const TRANSCRIPTS_DIR = path.join(CLAUDE_DIR, 'projects')
 export const CLAUDE_STATE = path.join(HOME, '.claude.json')
@@ -44,6 +48,13 @@ export const HIERARCHY = {
   everyMs: Number(process.env.HQ_REPORT_MIN ?? 10) * 60_000,
   // Prompts one round may send to the rank below, so a round can't start a storm.
   promptsPerRound: 2,
+  // A round waits until this share of the rank below is done (not working).
+  // Work that runs on and on still gets a report after HQ_REPORT_MAX_WAIT_MIN.
+  doneShare: 0.75,
+  maxWaitMs: Number(process.env.HQ_REPORT_MAX_WAIT_MIN ?? 45) * 60_000,
+  // An agent counts as done once it has been quiet this long, so the moment
+  // between one step and the next doesn't count.
+  quietMs: 60_000,
   // Reading a digest and writing a summary doesn't need the biggest model.
   model: process.env.HQ_ROLE_MODEL ?? 'sonnet',
   effort: process.env.HQ_ROLE_EFFORT ?? 'low',
@@ -55,9 +66,11 @@ export const HIERARCHY = {
 // The 5 hour budget (see budget.ts). Sessions are asked to wrap up at
 // HQ_WRAP_AT percent and kept from starting new steps at HQ_STOP_AT. In the
 // last HQ_SPARE_MIN minutes before the window resets, whatever is left goes to
-// paused and queued work. HQ_BUDGET=off turns all of it off.
+// paused and queued work. HQ_BUDGET=off turns all of it off. The wrap-up and
+// stop are off for now; HQ_GUARD=on brings them back.
 export const BUDGET = {
   on: process.env.HQ_BUDGET !== 'off',
+  guard: process.env.HQ_GUARD === 'on',
   wrapAt: Number(process.env.HQ_WRAP_AT ?? 80),
   stopAt: Number(process.env.HQ_STOP_AT ?? 85),
   spareMs: Number(process.env.HQ_SPARE_MIN ?? 30) * 60_000,

@@ -25,16 +25,21 @@ function store(key: string, v: string) {
 /** The person you clicked on. A prompt to them carries on their conversation. */
 export type PromptTarget = { sessionId: string; name: string; busy: boolean }
 
-/** One prompt box for the person you clicked on, or else the project area you last clicked. */
+/**
+ * One prompt box for the person you clicked on, or else the project area you
+ * last clicked. In Other folders (`chat`) it starts a chat about no project.
+ */
 export function PromptBar({
   project,
   target,
+  chat = false,
   focusKey,
   onSend,
   onClear,
 }: {
   project: Project | null
   target: PromptTarget | null
+  chat?: boolean
   focusKey: number
   onSend: (text: string, opts: SendOptions) => Promise<void>
   onClear: () => void
@@ -49,8 +54,8 @@ export function PromptBar({
   const ref = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    if ((project || target) && focusKey) ref.current?.focus()
-  }, [project, target?.sessionId, focusKey])
+    if ((project || target || chat) && focusKey) ref.current?.focus()
+  }, [project, target?.sessionId, chat, focusKey])
 
   useEffect(() => {
     if (!note || note.bad) return
@@ -58,13 +63,13 @@ export function PromptBar({
     return () => clearTimeout(t)
   }, [note])
 
-  if (!project && !target) {
+  if (!project && !target && !chat) {
     return <div className="prompt-bar hud-plate prompt-empty">Click a project’s area on the floor to prompt it.</div>
   }
 
-  const name = target?.name ?? project!.name
-  // A prompt to one person goes now, into their own conversation.
-  const sendWhen = target ? 'now' : when
+  const name = target?.name ?? project?.name ?? 'A chat'
+  // A prompt to one person goes now, into their own conversation. So does a chat.
+  const sendWhen = target || chat ? 'now' : when
 
   const send = async () => {
     const t = text.trim()
@@ -77,6 +82,8 @@ export function PromptBar({
       setNote({
         text: target
           ? `Sent to ${name}. They will get back to their desk shortly.`
+          : chat
+            ? 'Sent. Someone will sit down in Other folders shortly; click them to read the reply.'
           : sendWhen === 'spare'
             ? `Queued for ${name}. It starts near the next reset if usage is left and nothing else is running.`
             : `Sent to ${name}. Someone will sit down at a desk there shortly.`,
@@ -102,8 +109,9 @@ export function PromptBar({
         <span className="prompt-name">
           {name}
           {target && project && <span className="prompt-sub">{project.name}</span>}
+          {chat && <span className="prompt-sub">about no project</span>}
         </span>
-        {!target && (
+        {!target && !chat && (
           <div className="seg" role="group" aria-label="When">
             {([['now', 'Now'], ['spare', 'Spare usage']] as const).map(([k, l]) => (
               <button type="button" key={k} aria-pressed={when === k} onClick={() => setWhen(k)}>
@@ -114,7 +122,7 @@ export function PromptBar({
         )}
         {!target && when === 'now' && (
           <div className="seg" role="group" aria-label="Session">
-            {([['new', 'New task'], ['continue', 'Continue last']] as const).map(([k, l]) => (
+            {([['new', chat ? 'New chat' : 'New task'], ['continue', 'Continue last']] as const).map(([k, l]) => (
               <button
                 type="button"
                 key={k}
@@ -129,7 +137,8 @@ export function PromptBar({
             ))}
           </div>
         )}
-        <div className="seg" role="group" aria-label="What it may do">
+        {/* A chat has no project to edit: anything beyond reading asks you in HQ. */}
+        {!chat && <div className="seg" role="group" aria-label="What it may do">
           {([['acceptEdits', 'Can edit'], ['plan', 'Plan only']] as const).map(([k, l]) => (
             <button
               type="button"
@@ -143,8 +152,8 @@ export function PromptBar({
               {l}
             </button>
           ))}
-        </div>
-        <button type="button" className="icon-btn" aria-label={target ? `Stop talking to ${name}` : 'Stop prompting this project'} onClick={onClear}><PixelIcon name="close" size={12} /></button>
+        </div>}
+        <button type="button" className="icon-btn" aria-label={target ? `Stop talking to ${name}` : chat ? 'Stop chatting' : 'Stop prompting this project'} onClick={onClear}><PixelIcon name="close" size={12} /></button>
       </div>
       <div className="prompt-row">
         <textarea
@@ -152,7 +161,7 @@ export function PromptBar({
           className="input prompt-input"
           rows={1}
           value={text}
-          placeholder={target?.busy ? `${name} is still working. You can send this once they finish.` : target ? `What should ${name} do next?` : `What should ${name} do?`}
+          placeholder={target?.busy ? `${name} is still working. You can send this once they finish.` : target ? `What should ${name} do next?` : chat ? 'Ask anything. It is not about any project.' : `What should ${name} do?`}
           aria-label={`Prompt for ${name}`}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {

@@ -29,7 +29,7 @@ export function readBudget(fiveHour: Limits['fiveHour'] | undefined, now: number
   if (known && resetsAt <= now) return NONE
   const spare = known && resetsAt - now <= cfg.spareMs
   const pct = fiveHour.pct
-  const phase: Phase = pct >= (spare ? cfg.spareStopAt : cfg.stopAt) ? 'stop' : pct >= (spare ? cfg.spareWrapAt : cfg.wrapAt) ? 'wrap' : 'ok'
+  const phase: Phase = !cfg.guard ? 'ok' : pct >= (spare ? cfg.spareStopAt : cfg.stopAt) ? 'stop' : pct >= (spare ? cfg.spareWrapAt : cfg.wrapAt) ? 'wrap' : 'ok'
   // Sources round the reset time differently; a 10 minute bucket names the window.
   return { phase, spare, pct, resetsAt: known ? resetsAt : null, window: known ? String(Math.round(resetsAt / 600_000)) : 'unknown' }
 }
@@ -220,6 +220,7 @@ export function budgetState(now = Date.now()) {
   const r = currentBudget(now)
   return {
     on: BUDGET.on,
+    guard: BUDGET.guard,
     wrapAt: BUDGET.wrapAt,
     stopAt: BUDGET.stopAt,
     spareMin: Math.round(BUDGET.spareMs / 60_000),

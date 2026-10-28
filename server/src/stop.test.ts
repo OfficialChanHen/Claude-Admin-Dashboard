@@ -2,9 +2,22 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('./db.js', () => ({ get: vi.fn(), run: vi.fn(), all: vi.fn(() => []), tx: vi.fn((f: () => void) => f()) }))
 
-const { isClaude, pickProcess } = await import('./stop.js')
+const { isClaude, pickProcess, runsSession } = await import('./stop.js')
 
 const SID = '0b7e2f4c-1a2b-4c3d-8e9f-001122334455'
+
+describe('runsSession', () => {
+  it('knows a claude process HQ started for that session', () => {
+    expect(runsSession(['claude', '-p', '--session-id', SID], SID)).toBe(true)
+    expect(runsSession(['claude', '-p', '--resume', SID], SID)).toBe(true)
+  })
+
+  it('does not mistake a reused process id for it', () => {
+    expect(runsSession(['claude', '-p', '--resume', '11111111-1a2b-4c3d-8e9f-001122334455'], SID)).toBe(false)
+    expect(runsSession(['vim', SID], SID)).toBe(false)
+    expect(runsSession(null, SID)).toBe(false)
+  })
+})
 
 describe('isClaude', () => {
   it('knows the CLI however it was started', () => {

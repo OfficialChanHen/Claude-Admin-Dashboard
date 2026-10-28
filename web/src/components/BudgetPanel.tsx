@@ -31,7 +31,9 @@ export function BudgetPanel({ projects, refreshKey }: { projects: Map<string, Pr
   return (
     <div className="budget">
       <p className="note">
-        At {budget.wrapAt}% of the 5 hour limit, sessions finish the step they are on and stop. At {budget.stopAt}% new steps are held.
+        {budget.guard
+          ? `At ${budget.wrapAt}% of the 5 hour limit, sessions finish the step they are on and stop. At ${budget.stopAt}% new steps are held. `
+          : 'Sessions are not stopped near the 5 hour limit for now (HQ_GUARD=on brings it back). '}
         In the last {budget.spareMin} minutes before a reset, if nothing else is running, HQ finishes paused work and then starts queued tasks.
         A prompt you type past the limit still runs.
       </p>

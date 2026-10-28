@@ -119,10 +119,6 @@ export function KeyPanel() {
         {LAMPS.map((l) => (
           <Row key={l.text} mark={<span className="key-lamp" style={{ background: l.color }} />}>{l.text}</Row>
         ))}
-        <Row mark={<PixelIcon name="check" />}>
-          The clipboard left of the plate is the room’s to-do list: your own items, and Claude’s plans ticking off as it works,
-          with what each helper is doing under the task it was sent for.
-        </Row>
         <p className="note">
           In the hub: this notice board, the clock, and the plan meter showing your 5 hour and weekly use (click it for details). The
           lamp by the front door is green while HQ is live and blinks red while it reconnects. The back windows show the sky for the time of day.
@@ -174,7 +170,8 @@ export function KeyPanel() {
       <section>
         <h3>Rooms</h3>
         <p className="note">
-          Each project is a room. Click one to go in, and the prompt bar talks to that project. In a room, the arrow keys go to the
+          Each project is a room. Click one to go in, and the prompt bar talks to that project. In Other folders it starts a chat
+          about no project. In a room, the arrow keys go to the
           room next door. Escape, scrolling out, or clicking outside the room takes you back to the whole floor.
         </p>
       </section>

@@ -2,24 +2,28 @@ import fs from 'node:fs'
 import Fastify from 'fastify'
 import websocket from '@fastify/websocket'
 import fastifyStatic from '@fastify/static'
-import { HOST, PORT, WEB_DIST, ACTIVE_WINDOW_MS, APPROVAL_WAIT_MS, HEADLESS_APPROVAL_WAIT_MS } from './config.js'
+import { HOST, PORT, WEB_DIST, ACTIVE_WINDOW_MS, APPROVAL_WAIT_MS, HEADLESS_APPROVAL_WAIT_MS, CHAT_DIR } from './config.js'
 import { bus, type LiveEvent } from './bus.js'
 import { all, get, run } from './db.js'
-import { addProject, listProjects, projectForCwd, removeProject, scanProjects, updateProject } from './projects.js'
+import { addProject, listProjects, openInVsCode, projectForCwd, removeProject, scanProjects, updateProject } from './projects.js'
 import { startTranscripts, recentEvents, isReady, setSessionState, summarize } from './transcripts.js'
 import { Approvals, describeInput, hookReply, promptAnswer, type Approval, type Decision, type PromptAnswer } from './approvals.js'
 import { handleMcp, PROMPT_TOOL, type PromptInput } from './mcp.js'
-import { addNote, cleanNote, listNotes, plansFor, removeNote, updateNote } from './clipboard.js'
 import { startLimits, getLimits, acceptStatusLine } from './limits.js'
 import { handleHook } from './hooks.js'
 import { activeSessions, dbStats, listSessions, sessionDetail, usageSummary } from './usage.js'
-import { headlessSession, parsePrompt, runningPrompts, sessionTarget, startPrompt } from './prompt.js'
+import { headlessSession, parsePrompt, resumableChat, runningPrompts, sessionTarget, startPrompt } from './prompt.js'
 import { SESSION_ID, stopSession } from './stop.js'
 import { sessionChat } from './chat.js'
 import { hierarchyState, startHierarchy, toolsFor } from './hierarchy.js'
 import { adviseHook, budgetState, dropPaused, queuePrompt, runQueued, startBudget, unqueue } from './budget.js'
 import { gitState, startGit } from './git.js'
 import { previewFile, previewState, startPreviews } from './previews.js'
+import { recoverTasks } from './recover.js'
+import { startUsageCsv } from './usageCsv.js'
+
+// Tasks started before this moment belong to the last run of HQ.
+const bootAt = Date.now()
 
 /** The claude process a hook came from, sent by the hook command as a header. */
 function claudePid(headers: Record<string, unknown>) {
@@ -82,6 +86,14 @@ app.delete<{ Params: { id: string } }>('/api/projects/:id', async (req) => {
   removeProject(req.params.id)
   return { ok: true }
 })
+app.post<{ Params: { id: string } }>('/api/projects/:id/vscode', async (req, reply) => {
+  try {
+    await openInVsCode(req.params.id)
+    return { ok: true }
+  } catch (err) {
+    return reply.code(400).send({ error: (err as Error).message })
+  }
+})
 
 app.get<{ Querystring: { range?: string; project?: string } }>('/api/usage', async (req) =>
   usageSummary({ since: sinceFor(req.query.range), projectId: req.query.project || null }),
@@ -133,6 +145,17 @@ app.post('/api/prompt', async (req, reply) => {
       return reply.code(500).send({ error: 'Claude Code could not be started.' })
     }
   }
+  // A chat about no project: runs in HQ's chat folder and sits in Other folders.
+  if (parsed.chat) {
+    try {
+      fs.mkdirSync(CHAT_DIR, { recursive: true })
+      const resume = parsed.mode === 'continue' ? resumableChat(CHAT_DIR) ?? undefined : undefined
+      const { resumed } = startPrompt(parsed, CHAT_DIR, resume)
+      return { ok: true, resumed }
+    } catch {
+      return reply.code(500).send({ error: 'Claude Code could not be started.' })
+    }
+  }
   const project = listProjects().find((p) => p.id === parsed.projectId)
   if (!project) return reply.code(400).send({ error: 'That project is not in HQ.' })
   if (!fs.existsSync(project.path)) return reply.code(400).send({ error: 'That project folder is gone.' })
@@ -148,32 +171,6 @@ app.post('/api/prompt', async (req, reply) => {
   }
 })
 app.get('/api/prompt', async () => runningPrompts())
-
-// A project's clipboard: your items, and the plans its sessions are working through.
-app.get<{ Params: { id: string } }>('/api/projects/:id/clipboard', async (req) => ({
-  notes: listNotes(req.params.id),
-  plans: plansFor(req.params.id),
-}))
-app.post<{ Params: { id: string }; Body: { text?: unknown } }>('/api/projects/:id/notes', async (req, reply) => {
-  const text = cleanNote(req.body?.text)
-  if (typeof text !== 'string') return reply.code(400).send(text)
-  const note = addNote(req.params.id, text)
-  bus.publish({ kind: 'clipboard', projectId: note.projectId })
-  return note
-})
-app.patch<{ Params: { id: string }; Body: { done?: unknown; text?: unknown } }>('/api/notes/:id', async (req, reply) => {
-  const r = updateNote(req.params.id, req.body ?? {})
-  if (!r) return reply.code(404).send({ error: 'That item is gone.' })
-  if ('error' in r) return reply.code(400).send(r)
-  bus.publish({ kind: 'clipboard', projectId: r.projectId })
-  return r
-})
-app.delete<{ Params: { id: string } }>('/api/notes/:id', async (req, reply) => {
-  const pid = get<{ project_id: string }>('SELECT project_id FROM notes WHERE id = ?', req.params.id)?.project_id
-  if (!pid || !removeNote(req.params.id)) return reply.code(404).send({ error: 'That item is gone.' })
-  bus.publish({ kind: 'clipboard', projectId: pid })
-  return { ok: true }
-})
 
 // The 5 hour budget: what is paused, what is queued for spare usage.
 app.get('/api/budget', async () => budgetState())
@@ -344,8 +341,17 @@ await startTranscripts((done, total) => {
   progress.total = total
 })
 console.log(`Read ${progress.total} session logs in ${((Date.now() - t0) / 1000).toFixed(1)}s`, dbStats())
+// Tasks the last run of HQ left open: take back the live ones, resume the ones it cut off.
+// This also waits for session states, which tell a finished task from one cut off mid-step.
+try {
+  const r = recoverTasks(bootAt)
+  if (r.reclaimed || r.resumed) console.log(`Took back ${r.reclaimed} running task(s) and resumed ${r.resumed} cut off by the restart`)
+} catch (err) {
+  console.warn('Tasks from before the restart could not be checked:', err)
+}
 // Spare usage waits until session states are read, so it never starts over a busy session.
 startBudget()
 startHierarchy()
 startGit()
 startPreviews()
+startUsageCsv()

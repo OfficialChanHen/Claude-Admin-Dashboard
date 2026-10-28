@@ -15,7 +15,6 @@ export type LiveEvent =
   | { kind: 'limits'; limits: unknown }
   | { kind: 'projects' }
   | { kind: 'budget' }
-  | { kind: 'clipboard'; projectId: string }
   | { kind: 'report'; report: Report }
   | { kind: 'hierarchy' }
   /** A commit or a push in a project, seen in its reflog. */

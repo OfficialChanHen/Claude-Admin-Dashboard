@@ -363,7 +363,8 @@ function drawShelf(f: Fill, pod: Pod, n: number) {
 /** Lines changed and not committed yet, written up on the whiteboard as a green and a red bar. */
 function drawBoardStats(ctx: CanvasRenderingContext2D, cam: Camera, f: Fill, pod: Pod, added: number, removed: number, files: number) {
   const b = pod.boardRect
-  const len = (n: number) => (n > 0 ? Math.min(26, 2 + Math.round(Math.log2(n + 1) * 2.6)) : 0)
+  // Capped short of the "+N -M" label at b.x + 38, so a big diff's bar never runs into the text.
+  const len = (n: number) => (n > 0 ? Math.min(20, 2 + Math.round(Math.log2(n + 1) * 2.6)) : 0)
   const x = b.x + 8
   if (added) f(x, b.y + 4, len(added), 2, '#4f8a5b')
   if (removed) f(x, b.y + 7, len(removed), 2, '#c0566f')

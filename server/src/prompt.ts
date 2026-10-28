@@ -3,8 +3,8 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { DATA_DIR, PORT } from './config.js'
-import { get } from './db.js'
-import { notePid } from './stop.js'
+import { get, run } from './db.js'
+import { isRunning, notePid } from './stop.js'
 import { promptToolArgs } from './mcp.js'
 
 // Sends a prompt to a project by starting the claude CLI there, headless.
@@ -15,23 +15,28 @@ export const PERMISSION_MODES = ['acceptEdits', 'default', 'plan'] as const
 export type PermissionMode = (typeof PERMISSION_MODES)[number]
 export type PromptMode = 'new' | 'continue'
 
-export type PromptBody = { projectId?: unknown; sessionId?: unknown; text?: unknown; mode?: unknown; permissionMode?: unknown }
-/** `sessionId` sends the prompt to that one session, carrying on its conversation. */
-export type PromptRequest = { projectId: string; sessionId?: string; text: string; mode: PromptMode; permissionMode: PermissionMode }
+export type PromptBody = { projectId?: unknown; sessionId?: unknown; chat?: unknown; text?: unknown; mode?: unknown; permissionMode?: unknown }
+/**
+ * `sessionId` sends the prompt to that one session, carrying on its conversation.
+ * `chat` is a chat about no project, in HQ's chat folder.
+ */
+export type PromptRequest = { projectId: string; sessionId?: string; chat?: true; text: string; mode: PromptMode; permissionMode: PermissionMode }
 
 const MAX_PROMPT = 20_000
 
 export function parsePrompt(body: PromptBody): PromptRequest | { error: string } {
   const text = typeof body.text === 'string' ? body.text.trim() : ''
   const sessionId = typeof body.sessionId === 'string' && body.sessionId ? body.sessionId : undefined
-  // A session knows its own folder, so a prompt to one needs no project.
-  const projectId = typeof body.projectId === 'string' ? body.projectId : ''
-  if (!projectId && !sessionId) return { error: 'Pick a project first.' }
+  const chat = !sessionId && body.chat === true
+  // A session knows its own folder, so a prompt to one needs no project, and a chat has none.
+  const projectId = chat || typeof body.projectId !== 'string' ? '' : body.projectId
+  if (!projectId && !sessionId && !chat) return { error: 'Pick a project first.' }
   if (!text) return { error: 'Write a prompt first.' }
   if (text.length > MAX_PROMPT) return { error: 'That prompt is too long.' }
   const mode: PromptMode = sessionId || body.mode === 'continue' ? 'continue' : 'new'
-  const permissionMode = PERMISSION_MODES.includes(body.permissionMode as PermissionMode) ? (body.permissionMode as PermissionMode) : 'acceptEdits'
-  return { projectId, ...(sessionId ? { sessionId } : {}), text, mode, permissionMode }
+  // A chat has no files of its own to edit, so anything beyond reading asks you first.
+  const permissionMode = chat ? 'default' : PERMISSION_MODES.includes(body.permissionMode as PermissionMode) ? (body.permissionMode as PermissionMode) : 'acceptEdits'
+  return { projectId, ...(sessionId ? { sessionId } : {}), ...(chat ? { chat: true as const } : {}), text, mode, permissionMode }
 }
 
 /**
@@ -74,6 +79,15 @@ export function resumableSession(projectId: string) {
   return row?.id ?? null
 }
 
+/** The latest chat that is not busy right now, to carry on from. */
+export function resumableChat(dir: string) {
+  const row = get<{ id: string }>(
+    `SELECT id FROM sessions WHERE cwd = ? AND state NOT IN ('working', 'waiting') ORDER BY last_at DESC LIMIT 1`,
+    dir,
+  )
+  return row?.id ?? null
+}
+
 const running = new Map<number, { projectId: string; startedAt: number }>()
 
 export function runningPrompts() {
@@ -81,23 +95,43 @@ export function runningPrompts() {
 }
 
 // Sessions HQ is running headless right now, and the project each belongs to.
-const headless = new Map<string, { projectId: string; cwd: string }>()
+const headless = new Map<string, { projectId: string; cwd: string; taskId: string }>()
 
 /** A session HQ started that is still running: its permission requests come through HQ's prompt tool. */
 export function headlessSession(sessionId: string) {
   return headless.get(sessionId) ?? null
 }
 
+/** Keeps track of a running task until it ends. Returns the call for when it does. */
+function track(taskId: string, sessionId: string, pid: number | undefined, projectId: string, cwd: string, startedAt: number, onExit?: () => void) {
+  if (pid) {
+    running.set(pid, { projectId, startedAt })
+    notePid(sessionId, pid, true)
+  }
+  headless.set(sessionId, { projectId, cwd, taskId })
+  let ended = false
+  return () => {
+    if (ended) return
+    ended = true
+    if (pid) running.delete(pid)
+    // A newer task may have the session by now.
+    if (headless.get(sessionId)?.taskId === taskId) headless.delete(sessionId)
+    run('UPDATE tasks SET ended_at = ? WHERE id = ? AND ended_at IS NULL', Date.now(), taskId)
+    onExit?.()
+  }
+}
+
 /**
  * `resume` picks the session to carry on, instead of the project's latest.
  * `opts` is for HQ's managers and boss: a new session's id chosen up front,
- * extra CLI flags, and a call when the process ends.
+ * extra CLI flags, and a call when the process ends. `recovered` marks HQ
+ * resuming a task its restart cut off.
  */
 export function startPrompt(
   req: PromptRequest,
   cwd: string,
   resume?: string,
-  opts: { newId?: string; extraArgs?: string[]; onExit?: () => void } = {},
+  opts: { newId?: string; extraArgs?: string[]; onExit?: () => void; recovered?: boolean } = {},
 ) {
   const resumeId = req.mode === 'continue' ? resume ?? resumableSession(req.projectId) : null
   const bin = process.env.HQ_CLAUDE_BIN ?? 'claude'
@@ -109,21 +143,30 @@ export function startPrompt(
   fs.closeSync(log)
   child.stdin?.on('error', () => {})
   child.stdin?.end(req.text)
-  if (child.pid) {
-    running.set(child.pid, { projectId: req.projectId, startedAt: Date.now() })
-    notePid(sessionId, child.pid, true)
-  }
-  headless.set(sessionId, { projectId: req.projectId, cwd })
-  let ended = false
-  const done = () => {
-    if (ended) return
-    ended = true
-    if (child.pid) running.delete(child.pid)
-    headless.delete(sessionId)
-    opts.onExit?.()
-  }
+  const taskId = randomUUID()
+  const now = Date.now()
+  run(
+    'INSERT INTO tasks (id, session_id, project_id, cwd, permission_mode, pid, recovered, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    taskId, sessionId, req.projectId || null, cwd, req.permissionMode, child.pid ?? null, opts.recovered ? 1 : 0, now,
+  )
+  const done = track(taskId, sessionId, child.pid, req.projectId, cwd, now, opts.onExit)
   child.on('exit', done)
   child.on('error', done)
   child.unref()
   return { resumed: resumeId, sessionId }
+}
+
+/**
+ * Takes back a task started before HQ restarted whose process is still
+ * running: its approvals come through HQ again and Stop works. HQ is not its
+ * parent any more, so it checks every few seconds for the process to end.
+ */
+export function adoptTask(t: { id: string; sessionId: string; projectId: string | null; cwd: string; pid: number; startedAt: number }) {
+  const done = track(t.id, t.sessionId, t.pid, t.projectId ?? '', t.cwd, t.startedAt)
+  const timer = setInterval(() => {
+    if (isRunning(t.pid, t.sessionId)) return
+    clearInterval(timer)
+    done()
+  }, 5_000)
+  timer.unref()
 }

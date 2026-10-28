@@ -90,9 +90,9 @@ export function tvRect(pod: Pick<Pod, 'plate'>): Rect {
   return { x: pod.plate.x + pod.plate.w + 3, y: pod.plate.y, w: 22, h: pod.plate.h }
 }
 
-/** The trophy shelf on a room's back wall, left of the clipboard. */
-export function shelfRect(pod: Pick<Pod, 'rect' | 'clipboard'>): Rect {
-  return { x: pod.rect.x + 2, y: pod.clipboard.y, w: Math.max(6, pod.clipboard.x - pod.rect.x - 4), h: pod.clipboard.h }
+/** The trophy shelf on a room's back wall, left of the name plate. */
+export function shelfRect(pod: Pick<Pod, 'rect' | 'plate'>): Rect {
+  return { x: pod.rect.x + 2, y: pod.plate.y, w: 10, h: pod.plate.h }
 }
 
 export function roomAge(info: Pick<GitInfo, 'commits' | 'lastActiveAt'> | undefined, now: number): RoomAge {

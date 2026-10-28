@@ -10,7 +10,7 @@ vi.mock('./chat.js', () => ({ sessionChat: vi.fn(() => []) }))
 vi.mock('./budget.js', () => ({ currentBudget: vi.fn(() => ({ phase: 'ok' })) }))
 vi.mock('./config.js', () => ({ ACTIVE_WINDOW_MS: 600_000, DATA_DIR: '/tmp/hq-test', HIERARCHY: { on: true, everyMs: 600_000, promptsPerRound: 2 } }))
 
-import { bossPrompt, formatDigest, managerPrompt, roundDue, sharedFiles, whoIsNeeded, type AgentDigest } from './hierarchy.js'
+import { agentDone, bossPrompt, formatDigest, managerPrompt, mostlyDone, roundDue, sharedFiles, whoIsNeeded, type AgentDigest } from './hierarchy.js'
 
 const a = (id: string, projectId: string | null) => ({ id, projectId })
 
@@ -44,6 +44,35 @@ describe('roundDue', () => {
   })
   it('never starts a second round while one runs', () => {
     expect(roundDue(null, true, 5, every * 5, every)).toBe(false)
+  })
+  it('waits for most of the rank below to be done, but not forever', () => {
+    const maxWait = 45 * 60_000
+    expect(roundDue(null, false, 0, 1000, every, false, 0, maxWait)).toBe(false) // first round, agents still busy
+    expect(roundDue(0, false, 5, every, every, false, 0, maxWait)).toBe(false) // news, but agents still busy
+    expect(roundDue(0, false, 5, every, every, true, 0, maxWait)).toBe(true)
+    expect(roundDue(0, false, 5, maxWait, every, false, 0, maxWait)).toBe(true) // waited long enough
+  })
+})
+
+describe('mostlyDone', () => {
+  it('needs the given share of the rank below to be done', () => {
+    expect(mostlyDone([true, false], 0.75)).toBe(false)
+    expect(mostlyDone([true, true, true, false], 0.75)).toBe(true)
+    expect(mostlyDone([], 0.75)).toBe(true)
+  })
+})
+
+describe('agentDone', () => {
+  it('counts an agent as done once it stopped working and has been quiet a moment', () => {
+    expect(agentDone({ state: 'working', lastAt: 0 }, 120_000, 60_000)).toBe(false)
+    expect(agentDone({ state: 'idle', lastAt: 100_000 }, 120_000, 60_000)).toBe(false)
+    expect(agentDone({ state: 'idle', lastAt: 0 }, 120_000, 60_000)).toBe(true)
+    expect(agentDone({ state: 'waiting', lastAt: 0 }, 120_000, 60_000)).toBe(true)
+  })
+
+  it('is not done while its helpers are still working, even if its own turn ended', () => {
+    expect(agentDone({ state: 'idle', lastAt: 0 }, 120_000, 60_000, true)).toBe(false)
+    expect(agentDone({ state: 'idle', lastAt: 0 }, 120_000, 60_000, false)).toBe(true)
   })
 })
 

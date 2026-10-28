@@ -40,7 +40,6 @@ export type LiveEvent =
   | { kind: 'limits'; limits: Limits }
   | { kind: 'projects' }
   | { kind: 'budget' }
-  | { kind: 'clipboard'; projectId: string }
   | { kind: 'report'; report: Report }
   | { kind: 'hierarchy' }
   | { kind: 'git'; projectId: string; change: 'commit' | 'push'; subject: string | null; ts: number }
@@ -66,22 +65,10 @@ export type Approval = {
   headless?: boolean
 }
 
-/** A project's clipboard: your own items, and the plans its sessions are working through. */
-export type Note = { id: string; projectId: string; text: string; done: boolean; addedAt: number; doneAt: number | null }
-export type StepStatus = 'pending' | 'in_progress' | 'completed'
-export type Step = { text: string; status: StepStatus; active: string | null }
-export type Helper = { id: string; description: string; agentType: string | null; status: 'working' | 'done' | 'failed' | 'stopped'; steps: Step[] }
-export type Plan = {
-  sessionId: string; title: string | null; state: string; startedAt: number; updatedAt: number
-  tasks: (Step & { helpers: Helper[] })[]
-  /** Helpers sent while no task was in progress. */
-  helpers: Helper[]
-}
-export type Clipboard = { notes: Note[]; plans: Plan[] }
-
 /** The 5 hour budget: when sessions wrap up and stop, and what waits for spare usage. */
 export type Budget = {
   on: boolean
+  guard: boolean
   wrapAt: number
   stopAt: number
   spareMin: number
@@ -150,13 +137,14 @@ export const api = {
   scan: () => req<Project[]>('/api/projects/scan', { method: 'POST', body: '{}' }),
   updateProject: (id: string, patch: Partial<Project>) => req<Project>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   removeProject: (id: string) => req<{ ok: true }>(`/api/projects/${id}`, { method: 'DELETE' }),
+  openInVsCode: (id: string) => req<{ ok: true }>(`/api/projects/${id}/vscode`, { method: 'POST', body: '{}' }),
   usage: (range: Range, project?: string | null) => req<Usage>(`/api/usage?range=${range}${project ? `&project=${encodeURIComponent(project)}` : ''}`),
   session: (id: string) => req<SessionDetail>(`/api/sessions/${id}`),
   active: () => req<ActiveSession[]>('/api/active'),
   limits: () => req<Limits | null>('/api/limits'),
   git: () => req<GitInfo[]>('/api/git'),
   previews: () => req<Preview[]>('/api/previews'),
-  prompt: (body: { projectId: string; sessionId?: string; text: string; mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan'; when?: 'now' | 'spare' }) =>
+  prompt: (body: { projectId: string; sessionId?: string; chat?: boolean; text: string; mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan'; when?: 'now' | 'spare' }) =>
     req<{ ok: true; resumed?: string | null; queued?: string }>('/api/prompt', { method: 'POST', body: JSON.stringify(body) }),
   budget: () => req<Budget>('/api/budget'),
   hierarchy: () => req<Hierarchy>('/api/hierarchy'),
@@ -169,12 +157,6 @@ export const api = {
   status: () => req<{ ready: boolean; progress: { done: number; total: number } }>('/api/status'),
   chat: (id: string) => req<ChatLine[]>(`/api/sessions/${encodeURIComponent(id)}/chat`),
   stopSession: (id: string) => req<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}/stop`, { method: 'POST', body: '{}' }),
-  clipboard: (projectId: string) => req<Clipboard>(`/api/projects/${encodeURIComponent(projectId)}/clipboard`),
-  addNote: (projectId: string, text: string) =>
-    req<Note>(`/api/projects/${encodeURIComponent(projectId)}/notes`, { method: 'POST', body: JSON.stringify({ text }) }),
-  updateNote: (id: string, patch: { done?: boolean; text?: string }) =>
-    req<Note>(`/api/notes/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
-  removeNote: (id: string) => req<{ ok: true }>(`/api/notes/${encodeURIComponent(id)}`, { method: 'DELETE', body: '{}' }),
 }
 
 /** One line of a session's conversation. Keys match the live feed's keys. */

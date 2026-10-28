@@ -18,7 +18,8 @@ import { helperName, nameSessions, taskTitle } from './names.js'
 // time. The boss comes in once two or more projects have agents working.
 // Each is one Claude Code session that HQ resumes for every round. HQ gathers
 // what happened from the session logs (no tokens), hands it over on stdin, and
-// the manager or boss sums it up with the report tool. Either may send the rank
+// the manager or boss sums it up with the report tool. A round waits until most
+// of the rank below is done, so the report covers finished work. Either may send the rank
 // below it a prompt to sort out a problem. They don't edit code themselves.
 
 export type Role = 'manager' | 'boss'
@@ -33,11 +34,43 @@ export function whoIsNeeded(agents: Pick<Agent, 'id' | 'projectId'>[], roleIds: 
   return { managers, boss: perProject.size >= 2 }
 }
 
-/** A round is due the first time, and after that only for news, and not more often than everyMs. */
-export function roundDue(lastRound: number | null, running: boolean, lastNews: number, now: number, everyMs: number) {
+/**
+ * A round is due the first time, and after that only for news, and not more
+ * often than everyMs. Either way it waits until most of the rank below is done,
+ * unless it has waited maxWaitMs since waitingSince.
+ */
+export function roundDue(
+  lastRound: number | null,
+  running: boolean,
+  lastNews: number,
+  now: number,
+  everyMs: number,
+  done = true,
+  waitingSince = now,
+  maxWaitMs = Infinity,
+) {
   if (running) return false
-  if (lastRound == null) return true
-  return lastNews > lastRound && now - lastRound >= everyMs
+  if (lastRound != null && !(lastNews > lastRound && now - lastRound >= everyMs)) return false
+  return done || now - waitingSince >= maxWaitMs
+}
+
+/** Whether at least `share` of the rank below is done. Nobody below counts as done. */
+export function mostlyDone(done: boolean[], share: number) {
+  return !done.length || done.filter(Boolean).length / done.length >= share
+}
+
+/**
+ * An agent is done once it stopped working, none of its helpers is still at
+ * work, and it has been quiet a moment. Helpers in the background end the
+ * agent's own turn right away, so its state alone says done too soon.
+ */
+export const agentDone = (a: Pick<Agent, 'state' | 'lastAt'>, now: number, quietMs: number, helpersBusy = false) =>
+  a.state !== 'working' && !helpersBusy && now - a.lastAt >= quietMs
+
+/** Sessions with a helper that hasn't given its final answer. Helpers silent for the active window count as gone. */
+function sessionsWithBusyHelpers(now: number) {
+  const rows = all<{ session_id: string }>('SELECT DISTINCT session_id FROM agents WHERE done_at IS NULL AND last_at >= ?', now - ACTIVE_WINDOW_MS)
+  return new Set(rows.map((r) => r.session_id))
 }
 
 export type AgentDigest = {
@@ -279,22 +312,43 @@ export function hierarchyTick(now = Date.now()) {
   const agents = agentsNow(now)
   const need = whoIsNeeded(agents, new Set())
   const running = (r?: RoleRow) => !!r && (rounds.has(r.session_id) || !!headlessSession(r.session_id))
+  const busyHelpers = sessionsWithBusyHelpers(now)
+  const done = (a: Agent) => agentDone(a, now, HIERARCHY.quietMs, busyHelpers.has(a.id))
+  const due = (key: string, row: RoleRow | undefined, news: number, allDone: boolean) =>
+    roundDue(row?.last_round ?? null, running(row), news, now, HIERARCHY.everyMs, allDone, row?.last_round ?? neededSince(key, now), HIERARCHY.maxWaitMs)
+  for (const key of [...firstNeeded.keys()]) if (key === 'boss' ? !need.boss : !need.managers.includes(key)) firstNeeded.delete(key)
+
   for (const pid of need.managers) {
     const row = roles.find((r) => r.role === 'manager' && r.project_id === pid)
     const mine = agents.filter((a) => a.projectId === pid)
     const news = Math.max(...mine.map((a) => a.lastAt))
-    if (roundDue(row?.last_round ?? null, running(row), news, now, HIERARCHY.everyMs)) managerRound(pid, mine, row, now)
+    if (due(pid, row, news, mostlyDone(mine.map(done), HIERARCHY.doneShare))) managerRound(pid, mine, row, now)
   }
   if (need.boss) {
     const row = roles.find((r) => r.role === 'boss')
     const managed = new Set(need.managers)
     const lastReport = get<{ ts: number | null }>(`SELECT MAX(ts) ts FROM reports WHERE role = 'manager'`)?.ts ?? 0
-    const unmanaged = agents.filter((a) => a.projectId && !managed.has(a.projectId)).map((a) => a.lastAt)
-    const news = Math.max(lastReport, ...unmanaged)
+    const unmanaged = agents.filter((a) => a.projectId && !managed.has(a.projectId))
+    const news = Math.max(lastReport, ...unmanaged.map((a) => a.lastAt))
+    // A manager is done once its agents are and it has reported on their latest work.
+    const managerDone = (pid: string) => {
+      const mine = agents.filter((a) => a.projectId === pid)
+      const m = roles.find((r) => r.role === 'manager' && r.project_id === pid)
+      const reported = get<{ ts: number | null }>(`SELECT MAX(ts) ts FROM reports WHERE role = 'manager' AND project_id = ?`, pid)?.ts ?? 0
+      return mostlyDone(mine.map(done), HIERARCHY.doneShare) && !running(m) && reported >= Math.max(...mine.map((a) => a.lastAt))
+    }
+    const below = [...need.managers.map(managerDone), ...unmanaged.map(done)]
     // On the first round, wait for the managers there are to report first.
     const waitingOnManagers = !row && need.managers.some((pid) => !all('SELECT 1 FROM reports WHERE role = ? AND project_id = ? LIMIT 1', 'manager', pid).length)
-    if (!waitingOnManagers && roundDue(row?.last_round ?? null, running(row), news, now, HIERARCHY.everyMs)) bossRound(agents, managed, row, now)
+    if (!waitingOnManagers && due('boss', row, news, mostlyDone(below, HIERARCHY.doneShare))) bossRound(agents, managed, row, now)
   }
+}
+
+/** When each manager (by project id) or the boss was first needed, so a first round that waits on busy agents still runs in time. */
+const firstNeeded = new Map<string, number>()
+function neededSince(key: string, now: number) {
+  if (!firstNeeded.has(key)) firstNeeded.set(key, now)
+  return firstNeeded.get(key)!
 }
 
 /** The report and prompt tools for a manager's or the boss's session; nothing for anyone else. */

@@ -8,7 +8,7 @@ vi.mock('./projects.js', () => ({ listProjects: vi.fn(() => []) }))
 vi.mock('./prompt.js', () => ({ PERMISSION_MODES: ['acceptEdits', 'default', 'plan'], runningPrompts: vi.fn(() => []), startPrompt: vi.fn() }))
 vi.mock('./config.js', () => ({
   ACTIVE_WINDOW_MS: 600_000,
-  BUDGET: { on: true, wrapAt: 80, stopAt: 85, spareMs: 30 * 60_000, spareWrapAt: 95, spareStopAt: 99 },
+  BUDGET: { on: true, guard: true, wrapAt: 80, stopAt: 85, spareMs: 30 * 60_000, spareWrapAt: 95, spareStopAt: 99 },
 }))
 
 const { readBudget, Governor, canSpend } = await import('./budget.js')
@@ -41,8 +41,14 @@ describe('readBudget', () => {
   })
 
   it('does nothing when turned off or without numbers', () => {
-    expect(readBudget(at(99, 120), NOW, { on: false, wrapAt: 80, stopAt: 85, spareMs: 0, spareWrapAt: 95, spareStopAt: 99 }).phase).toBe('ok')
+    expect(readBudget(at(99, 120), NOW, { on: false, guard: true, wrapAt: 80, stopAt: 85, spareMs: 0, spareWrapAt: 95, spareStopAt: 99 }).phase).toBe('ok')
     expect(readBudget(null, NOW).phase).toBe('ok')
+  })
+
+  it('never wraps up or stops with the guard off, but still spots spare usage', () => {
+    const cfg = { on: true, guard: false, wrapAt: 80, stopAt: 85, spareMs: 30 * 60_000, spareWrapAt: 95, spareStopAt: 99 }
+    expect(readBudget(at(99, 120), NOW, cfg).phase).toBe('ok')
+    expect(readBudget(at(99, 25), NOW, cfg)).toMatchObject({ phase: 'ok', spare: true })
   })
 })
 

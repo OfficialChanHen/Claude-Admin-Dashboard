@@ -20,7 +20,6 @@ import { PreviewPanel } from './components/PreviewPanel'
 import { BOSS, HUB } from './world/office'
 import { PixelIcon } from './components/PixelIcon'
 import { KeyPanel } from './components/KeyPanel'
-import { ClipboardPanel } from './components/ClipboardPanel'
 import { ReportsPanel } from './components/ReportsPanel'
 import { ApprovalsList, askerName } from './components/ApprovalsList'
 import { NeedsOk } from './components/NeedsOk'
@@ -31,10 +30,7 @@ const MAX_FEED = 300
 
 type Win =
   | { kind: 'projects' } | { kind: 'usage'; projectId: string | null } | { kind: 'limits' } | { kind: 'log' } | { kind: 'project'; projectId: string }
-  | { kind: 'key' } | { kind: 'clipboard'; projectId: string } | { kind: 'reports' } | { kind: 'tv'; projectId: string }
-
-// Steps that change what is on a clipboard: a to-do list, or a helper sent off.
-const PLAN_TOOLS = new Set(['TodoWrite', 'Agent', 'Task'])
+  | { kind: 'key' } | { kind: 'reports' } | { kind: 'tv'; projectId: string }
 
 /** Someone about to be sent home, waiting for you to confirm. From a drag to a door, or the button in their conversation. */
 type Leaving = { key: string; sessionId: string; label: string; x: number | null; y: number | null; busy: boolean; error: string }
@@ -104,12 +100,10 @@ export function App() {
   const [budgetTick, setBudgetTick] = useState(0)
   const [reportTick, setReportTick] = useState(0)
   const [reportCount, setReportCount] = useState(0)
-  const [clipTick, setClipTick] = useState(0)
   const [backfill, setBackfill] = useState<{ done: number; total: number } | null>(null)
   const reqOutput = useRef(new Map<string, number>())
   const reqActions = useRef(new Map<string, number>())
   const seen = useRef(new Set<string>())
-  const planCalls = useRef(new Set<string>())
   const world = useRef<WorldModel>()
   if (!world.current) {
     world.current = new WorldModel()
@@ -189,16 +183,6 @@ export function App() {
       setUsageTick((n) => n + 1)
     }, 4000)
   }
-  // Clipboards re-read soon after a plan or helper changes; a burst of changes reads once.
-  const clipTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const bumpClip = () => {
-    if (clipTimer.current) return
-    clipTimer.current = setTimeout(() => {
-      clipTimer.current = null
-      setClipTick((n) => n + 1)
-    }, 800)
-  }
-
   // Requests seen so far; only ones that arrive live after this count as new.
   const knownApprovals = useRef(new Set<string>())
   const alertApproval = useRef<(a: Approval) => void>(() => {})
@@ -231,9 +215,6 @@ export function App() {
       case 'hierarchy':
         setReportTick((n) => n + 1)
         break
-      case 'clipboard':
-        bumpClip()
-        break
       case 'hello':
         knownApprovals.current = new Set((ev.approvals ?? []).map((a) => a.id))
         setApprovals(ev.approvals ?? [])
@@ -265,23 +246,16 @@ export function App() {
         push({ type: 'say', key: `s-${ev.sessionId}-${ev.ts}-${ev.text.length}`, ts: ev.ts, sessionId: ev.sessionId, projectId: ev.projectId, agentId: ev.agentId, text: ev.text })
         break
       case 'agent_start':
-        bumpClip()
         push({ type: 'agent', key: `a-${ev.agentId}`, ts: ev.ts, sessionId: ev.sessionId, projectId: ev.projectId, agentId: ev.agentId, description: ev.description, agentType: ev.agentType, model: ev.model })
         break
       case 'action':
         if (ev.requestId) reqActions.current.set(ev.requestId, (reqActions.current.get(ev.requestId) ?? 0) + 1)
-        if (PLAN_TOOLS.has(ev.tool)) {
-          planCalls.current.add(ev.id)
-          bumpClip()
-        }
         push({
           type: 'action', key: ev.id, ts: ev.ts, sessionId: ev.sessionId, projectId: ev.projectId, agentId: ev.agentId,
           tool: ev.tool, summary: ev.summary, requestId: ev.requestId, done: false, isError: false, resultTokens: 0,
         })
         break
       case 'action_done':
-        // A helper reporting back ticks off its line.
-        if (planCalls.current.delete(ev.id)) bumpClip()
         setFeed((f) => f.map((it) => (it.type === 'action' && it.key === ev.id ? { ...it, done: true, isError: ev.isError, resultTokens: ev.resultTokens } : it)))
         break
       case 'usage':
@@ -305,16 +279,19 @@ export function App() {
 
   const meter = useMemo(() => ({ fiveHour: limits?.fiveHour?.pct ?? null, week: limits?.sevenDay?.pct ?? null }), [limits])
 
-  /** Walks into a room. A project's room is also where the prompt bar sends to. */
+  /**
+   * Walks into a room. A project's room is also where the prompt bar sends to,
+   * and in Other folders it starts a chat about no project.
+   */
   const activeRef = useRef(active)
   activeRef.current = active
   const enterRoom = useCallback((id: string | null) => {
     setRoom(id)
-    if (id && id !== HUB && id !== OTHER && id !== BOSS) {
+    if (id && id !== HUB && id !== BOSS) {
       setFocus(id)
       setPromptFocus((n) => n + 1)
-      // Someone from another project stops being the one you talk to.
-      setSelected((sel) => (sel && activeRef.current.find((s) => s.id === sel)?.projectId !== id ? null : sel))
+      // Someone from another room stops being the one you talk to.
+      setSelected((sel) => (sel && (activeRef.current.find((s) => s.id === sel)?.projectId ?? OTHER) !== id ? null : sel))
     }
   }, [])
 
@@ -356,9 +333,6 @@ export function App() {
         break
       case 'board':
         setWin({ kind: 'usage', projectId: h.podId })
-        break
-      case 'clipboard':
-        setWin({ kind: 'clipboard', projectId: h.podId })
         break
       case 'pod':
         enterRoom(h.podId)
@@ -479,7 +453,6 @@ export function App() {
         <div className="proj-edit">
           <div className="row">
             <button className="btn small" onClick={() => setWin({ kind: 'usage', projectId: p.id })}>Usage</button>
-            <button className="btn small" onClick={() => setWin({ kind: 'clipboard', projectId: p.id })}>Clipboard</button>
             {p.prodUrl && <a className="btn small" href={p.prodUrl} target="_blank" rel="noreferrer">Live site</a>}
           </div>
         </div>
@@ -498,10 +471,6 @@ export function App() {
   } else if (win?.kind === 'key') {
     windowTitle = 'Notice board'
     windowBody = <KeyPanel />
-  } else if (win?.kind === 'clipboard') {
-    const p = projectMap.get(win.projectId)
-    windowTitle = `${p?.name ?? 'Other folders'} clipboard`
-    windowBody = <ClipboardPanel projectId={win.projectId} canSend={!!p} refreshKey={clipTick} onOpenSession={setSelected} />
   }
 
   // For keyboard and screen reader users: the same places, as a list that shows when focused.
@@ -511,8 +480,6 @@ export function App() {
     { id: OTHER, label: 'Other folders' },
     { id: BOSS, label: "Boss's office" },
   ]
-  // The clipboard of the room you are in, or of the project the prompt box sends to.
-  const clipFor = room && room !== HUB && room !== BOSS ? room : focus
   const services: { label: string; open: () => void }[] = [
     { label: 'Reception: projects', open: () => setWin({ kind: 'projects' }) },
     { label: 'Accounts: usage', open: () => setWin({ kind: 'usage', projectId: null }) },
@@ -520,7 +487,6 @@ export function App() {
     { label: 'Archive: action log', open: () => setWin({ kind: 'log' }) },
     { label: 'Notice board: key and lighting', open: () => setWin({ kind: 'key' }) },
     { label: 'Reports from the boss and managers', open: () => setWin({ kind: 'reports' }) },
-    ...(clipFor ? [{ label: `Clipboard: ${projectMap.get(clipFor)?.name ?? 'Other folders'} to-do list and plans`, open: () => setWin({ kind: 'clipboard', projectId: clipFor }) }] : []),
   ]
   const people = active.filter((s) => s.state !== 'ended' && visible(s.projectId))
 
@@ -532,10 +498,12 @@ export function App() {
     ? { sessionId: selected, name: chatTitle, busy: chatSession?.state === 'working' || chatSession?.state === 'waiting' }
     : null
   const promptProject = selected ? chatProject : focus ? projectMap.get(focus) ?? null : null
+  const chatting = !selected && focus === OTHER
 
   const send = async (text: string, opts: SendOptions) => {
     if (selected) return void (await api.prompt({ projectId: chatSession?.projectId ?? '', sessionId: selected, text, ...opts }))
     if (!focus) return
+    if (chatting) return void (await api.prompt({ projectId: '', chat: true, text, mode: opts.mode, permissionMode: opts.permissionMode }))
     await api.prompt({ projectId: focus, text, ...opts })
   }
 
@@ -620,6 +588,7 @@ export function App() {
           <PromptBar
             project={promptProject}
             target={promptTarget}
+            chat={chatting}
             focusKey={promptFocus}
             onSend={send}
             onClear={() => setFocus(null)}

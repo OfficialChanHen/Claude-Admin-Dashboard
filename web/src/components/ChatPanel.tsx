@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, type ChatLine, type Project } from '../lib/api'
 import { chatBlocks, mergeChat } from '../lib/chat'
+import { CHAT_WIDTH_DEFAULT, clampChatWidth } from '../lib/chatWidth'
 import { clock } from '../lib/format'
 import { toolIcon } from '../lib/pixelIcons'
 import type { WorldModel } from '../world/model'
 import { taskLabel } from '../world/tasks'
+import { SENIORS, YOU, lookOf } from '../world/render'
 import { Markdown } from './Markdown'
 import { PixelIcon } from './PixelIcon'
+import { Portrait } from './Portrait'
 import type { FeedItem } from './LiveFeed'
 
 /** What the person is doing right now, read from the office every moment. */
@@ -29,6 +32,41 @@ function useStatus(model: WorldModel, sessionId: string) {
     return () => clearInterval(t)
   }, [model, sessionId])
   return status
+}
+
+/** Who they look like in the office, kept after they have left it. */
+function useLook(model: WorldModel, sessionId: string) {
+  const [look, setLook] = useState<number | null>(null)
+  useEffect(() => {
+    setLook(null)
+    const read = () => {
+      const s = model.sprites.get(sessionId)
+      if (s) setLook(lookOf(s))
+    }
+    read()
+    const t = setInterval(read, 1000)
+    return () => clearInterval(t)
+  }, [model, sessionId])
+  return look ?? SENIORS[0]
+}
+
+const WIDTH_KEY = 'hq.chatWidth'
+
+function storedWidth(): number {
+  try {
+    const v = Number(localStorage.getItem(WIDTH_KEY))
+    return v > 0 ? v : CHAT_WIDTH_DEFAULT
+  } catch {
+    return CHAT_WIDTH_DEFAULT
+  }
+}
+
+function storeWidth(px: number) {
+  try {
+    localStorage.setItem(WIDTH_KEY, String(px))
+  } catch {
+    // storage can be blocked; the width still applies for this visit
+  }
 }
 
 /**
@@ -59,8 +97,40 @@ export function ChatPanel({
   const [error, setError] = useState('')
   const [open, setOpen] = useState<Set<string>>(new Set())
   const scroller = useRef<HTMLDivElement>(null)
+  const panel = useRef<HTMLElement>(null)
   const pinned = useRef(true)
   const status = useStatus(model, sessionId)
+  const look = useLook(model, sessionId)
+
+  // The dock (this panel plus the prompt box under it) reads its width from here,
+  // so dragging the handle and shrinking the window both go through one clamp.
+  useEffect(() => {
+    const dock = panel.current?.closest<HTMLElement>('.chat-dock')
+    if (!dock) return
+    const apply = (px: number) => dock.style.setProperty('--chat-w', `${clampChatWidth(px, window.innerWidth)}px`)
+    apply(storedWidth())
+    const onResize = () => apply(parseFloat(dock.style.getPropertyValue('--chat-w')) || CHAT_WIDTH_DEFAULT)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const dock = panel.current?.closest<HTMLElement>('.chat-dock')
+    if (!dock) return
+    const startX = e.clientX
+    const startWidth = dock.getBoundingClientRect().width
+    const move = (ev: PointerEvent) => {
+      dock.style.setProperty('--chat-w', `${clampChatWidth(startWidth + (ev.clientX - startX), window.innerWidth)}px`)
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      storeWidth(parseFloat(dock.style.getPropertyValue('--chat-w')) || CHAT_WIDTH_DEFAULT)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
 
   useEffect(() => {
     setHistory(null)
@@ -88,7 +158,8 @@ export function ChatPanel({
   }, [blocks, status])
 
   return (
-    <aside className="chat-panel" role="dialog" aria-labelledby="chat-title">
+    <aside className="chat-panel" role="dialog" aria-labelledby="chat-title" ref={panel}>
+      <div className="chat-resize" role="separator" aria-orientation="vertical" aria-label="Resize the conversation" onPointerDown={startResize} />
       <div className="game-window-head">
         <div className="chat-who">
           <h2 className="panel-title" id="chat-title">{title}</h2>
@@ -146,12 +217,15 @@ export function ChatPanel({
             }
             return (
               <li key={b.key} className={`chat-msg ${b.kind}`}>
-                <div className="chat-meta">{b.kind === 'you' ? 'You' : 'Claude'} <span>{clock(b.ts)}</span></div>
-                {b.kind === 'you' ? (
-                  <div className="chat-text">{b.text}</div>
-                ) : (
-                  <div className="chat-text md"><Markdown text={b.text} /></div>
-                )}
+                <Portrait row={b.kind === 'you' ? YOU : look} label={b.kind === 'you' ? 'You' : title} />
+                <div className="chat-body">
+                  <div className="chat-meta">{b.kind === 'you' ? 'You' : 'Claude'} <span>{clock(b.ts)}</span></div>
+                  {b.kind === 'you' ? (
+                    <div className="chat-text">{b.text}</div>
+                  ) : (
+                    <div className="chat-text md"><Markdown text={b.text} /></div>
+                  )}
+                </div>
               </li>
             )
           })}

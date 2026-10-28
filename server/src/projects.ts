@@ -1,10 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { all, get, run } from './db.js'
 import { SCAN_ROOTS } from './config.js'
 import { bus } from './bus.js'
+import { writeProjectSettings } from './projectSettings.js'
 
 const exec = promisify(execFile)
 
@@ -133,6 +134,16 @@ async function inspect(dir: string) {
   return { devCmd, framework, github }
 }
 
+// A project HQ tracks gets HQ's permissions in its own .claude/settings.local.json.
+// A folder that can't be written to is still added.
+function tryProjectSettings(dir: string) {
+  try {
+    writeProjectSettings(dir)
+  } catch {
+    // read-only or gone; the project just keeps asking
+  }
+}
+
 export async function addProject(dir: string, source: 'scan' | 'manual' = 'manual'): Promise<Project> {
   const abs = path.resolve(dir)
   if (!fs.statSync(abs).isDirectory()) throw new Error('Not a folder')
@@ -141,6 +152,7 @@ export async function addProject(dir: string, source: 'scan' | 'manual' = 'manua
     // Re-adding something that was removed brings it back.
     if (existing.hidden && source === 'manual') {
       run('UPDATE projects SET hidden = 0 WHERE id = ?', existing.id)
+      tryProjectSettings(abs)
       changed()
     }
     return toProject({ ...existing, hidden: 0 })
@@ -153,6 +165,7 @@ export async function addProject(dir: string, source: 'scan' | 'manual' = 'manua
      VALUES (?, ?, ?, '[]', ?, 1, ?, ?, ?, ?, ?)`,
     id, path.basename(abs), abs, COLORS[count % COLORS.length], source, info.github, info.devCmd, info.framework, Date.now(),
   )
+  tryProjectSettings(abs)
   changed()
   return listProjects().find((p) => p.id === id)!
 }
@@ -205,4 +218,20 @@ export function updateProject(id: string, patch: Partial<Pick<Project, 'name' | 
 export function removeProject(id: string) {
   run('UPDATE projects SET hidden = 1 WHERE id = ?', id)
   changed()
+}
+
+// `code` picks up WSL automatically when run from inside it; no remote flag needed.
+export async function openInVsCode(id: string): Promise<void> {
+  const p = listProjects().find((pr) => pr.id === id)
+  if (!p) throw new Error('No such project.')
+  return new Promise((resolve, reject) => {
+    const child = spawn('code', [p.path], { detached: true, stdio: 'ignore' })
+    child.once('error', (err: NodeJS.ErrnoException) =>
+      reject(new Error(err.code === 'ENOENT' ? 'VS Code\'s "code" command isn\'t on your PATH.' : err.message)),
+    )
+    child.once('spawn', () => {
+      child.unref()
+      resolve()
+    })
+  })
 }

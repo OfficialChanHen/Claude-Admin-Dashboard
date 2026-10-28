@@ -137,27 +137,6 @@ CREATE TABLE IF NOT EXISTS paused (
   resumed_at  INTEGER
 );
 
--- Each to-do list a session or helper wrote (TodoWrite), for the clipboards.
-CREATE TABLE IF NOT EXISTS todos (
-  id          TEXT PRIMARY KEY,
-  session_id  TEXT NOT NULL,
-  agent_id    TEXT,
-  ts          INTEGER NOT NULL,
-  items       TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS todos_session ON todos(session_id, ts);
-
--- Your own items on a project's clipboard.
-CREATE TABLE IF NOT EXISTS notes (
-  id          TEXT PRIMARY KEY,
-  project_id  TEXT NOT NULL,
-  text        TEXT NOT NULL,
-  done        INTEGER NOT NULL DEFAULT 0,
-  added_at    INTEGER NOT NULL,
-  done_at     INTEGER
-);
-CREATE INDEX IF NOT EXISTS notes_project ON notes(project_id, added_at);
-
 -- Prompts waiting for spare usage before a reset.
 CREATE TABLE IF NOT EXISTS queue (
   id              TEXT PRIMARY KEY,
@@ -188,12 +167,35 @@ CREATE TABLE IF NOT EXISTS reports (
   text        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS reports_ts ON reports(ts);
+
+-- Each task HQ starts, so a restart can take back the ones still running and
+-- resume the ones it cut off (see recover.ts). recovered marks a task that is
+-- itself such a resume; it is never resumed again.
+CREATE TABLE IF NOT EXISTS tasks (
+  id              TEXT PRIMARY KEY,
+  session_id      TEXT NOT NULL,
+  project_id      TEXT,
+  cwd             TEXT NOT NULL,
+  permission_mode TEXT NOT NULL,
+  pid             INTEGER,
+  recovered       INTEGER NOT NULL DEFAULT 0,
+  started_at      INTEGER NOT NULL,
+  ended_at        INTEGER
+);
+CREATE INDEX IF NOT EXISTS tasks_open ON tasks(ended_at);
 `)
 
 // A manager or boss session HQ stopped resuming in favour of a fresh one. Its
 // row stays so the old session is still known as HQ's own, not an agent.
 try {
   db.exec('ALTER TABLE roles ADD COLUMN retired_at INTEGER')
+} catch {
+  // already there
+}
+
+// When a helper gave its final answer, so a manager waits for helpers still at work.
+try {
+  db.exec('ALTER TABLE agents ADD COLUMN done_at INTEGER')
 } catch {
   // already there
 }

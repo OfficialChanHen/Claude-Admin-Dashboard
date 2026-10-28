@@ -62,9 +62,24 @@ const RANKS: { from: number; to: number; swap: Record<string, string> }[] = [
   { from: 15, to: 21, swap: { '#ff7143': '#f2c14e' } }, // boss
   { from: 0, to: COURIER, swap: { '#42a379': '#8a5a33', '#369069': '#6e4626', '#d6d4aa': '#a8774a', '#c5b993': '#8f633b' } }, // courier, all in brown
   { from: 3, to: CLERK, swap: { '#c2504d': '#4a78c0', '#a54240': '#3a5f9a', '#a09cca': '#3b4a75', '#7a77a4': '#2e3a5c' } }, // mail clerk, in postal blue
+  { from: 6, to: 30, swap: { '#42a379': '#2a9bb3', '#369069': '#1f7d91', '#5c6278': '#2c2220', '#7a77a4': '#45342c', '#a09cca': '#5e463a' } }, // you, in the chat: dark hair, teal shirt
 ]
 export const MANAGER = 18
 export const BOSS = 21
+/** You, as drawn beside your own messages in a conversation. */
+export const YOU = 30
+
+/** Draws someone standing, facing you, into a small canvas. */
+export function drawPortrait(cv: HTMLCanvasElement, sheets: Sheets, row: number, scale: number) {
+  const ctx = cv.getContext('2d')!
+  cv.width = PORTRAIT.w * scale
+  cv.height = PORTRAIT.h * scale
+  ctx.imageSmoothingEnabled = false
+  ctx.clearRect(0, 0, cv.width, cv.height)
+  ctx.drawImage(sheets.urban, FACE_COL.down * TILE + PORTRAIT.x, row * TILE + PORTRAIT.y, PORTRAIT.w, PORTRAIT.h, 0, 0, cv.width, cv.height)
+}
+/** The part of a person's tile a portrait shows: all of them, without the empty edges. */
+export const PORTRAIT = { x: 2, y: 1, w: 12, h: 15 }
 
 /** Swaps exact colours in RGBA pixels. */
 export function swapColors(d: Uint8ClampedArray, swap: Record<string, string>) {
@@ -332,19 +347,6 @@ function drawPlate(f: Fill, r: Rect) {
   f(r.x + r.w - 3, r.y + r.h - 4, 1, 1, ART.brassDark)
 }
 
-/** A clipboard with a ticked list on it: the room's to-do items and Claude's plans. */
-function drawClipboard(f: Fill, r: Rect) {
-  f(r.x, r.y, r.w, r.h, ART.outline)
-  f(r.x + 1, r.y + 1, r.w - 2, r.h - 2, ART.wood)
-  f(r.x + 2, r.y + 2, r.w - 4, r.h - 3, ART.paper)
-  f(r.x + 3, r.y, r.w - 6, 2, ART.brassDark) // the clip
-  for (let i = 0; i < 3; i++) {
-    const ly = r.y + 3 + i * 2
-    f(r.x + 2, ly, 1, 1, i === 0 ? ART.inkRed : ART.ink)
-    f(r.x + 4, ly, r.w - 6, 1, ART.ink)
-  }
-}
-
 /** The office sign: a wooden board with the logo; the name is lettered on each frame. */
 function drawSign(f: Fill, s: Rect) {
   f(s.x, s.y, s.w, s.h, ART.outline)
@@ -487,10 +489,7 @@ export function drawBackground(office: Office, sheets: Sheets) {
     fill(m.x + 4, m.y + 8, 2, 2, ART.outline)
     fill(m.x + 1, m.y + 1, 8, 5, ART.screenOff)
   }
-  for (const p of office.pods) {
-    drawPlate(fill, p.plate)
-    drawClipboard(fill, p.clipboard)
-  }
+  for (const p of office.pods) drawPlate(fill, p.plate)
   drawPlate(fill, office.boss.plate)
   for (const f of office.facilities) {
     if (f.key === 'notice') drawNotice(fill, f.rect)
@@ -731,7 +730,6 @@ export type Hit =
   | { kind: 'hub'; label: string; thing?: Thing; rect?: Rect }
   | { kind: 'plaque'; podId: string; label: string }
   | { kind: 'board'; podId: string; label: string }
-  | { kind: 'clipboard'; podId: string; label: string }
   /** The TV on a room's back wall: its dev server and live site. */
   | { kind: 'tv'; podId: string; label: string }
   | { kind: 'cat'; label: string }
@@ -757,9 +755,9 @@ export function hitRect(office: Office, hit: Hit): Rect | null {
     const mine = office.facilities.filter((f) => f.key === hit.key)
     return (mine.find((f) => f.label === hit.label) ?? mine[0])?.rect ?? null
   }
-  if (hit.kind === 'board' || hit.kind === 'plaque' || hit.kind === 'clipboard') {
+  if (hit.kind === 'board' || hit.kind === 'plaque') {
     const p = office.pods.find((x) => x.id === hit.podId)
-    return p ? (hit.kind === 'board' ? p.boardRect : hit.kind === 'clipboard' ? p.clipboard : p.plate) : null
+    return p ? (hit.kind === 'board' ? p.boardRect : p.plate) : null
   }
   if (hit.kind === 'tv') {
     const p = office.pods.find((x) => x.id === hit.podId)
@@ -1616,7 +1614,6 @@ export function hitFloor(office: Office, x: number, y: number): Hit | null {
   if (within(office.hub.rect)) return { kind: 'hub', label: 'Hub' }
   for (const p of office.pods) {
     if (within(p.plate)) return { kind: 'plaque', podId: p.id, label: p.name }
-    if (within(p.clipboard)) return { kind: 'clipboard', podId: p.id, label: `${p.name} clipboard` }
     if (!within(p.rect, 4)) continue
     if (within(p.boardRect)) return { kind: 'board', podId: p.id, label: `${p.name} usage` }
     const base = { kind: 'pod' as const, podId: p.id, label: p.name }
