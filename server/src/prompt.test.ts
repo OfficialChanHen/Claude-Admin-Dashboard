@@ -5,7 +5,7 @@ vi.mock('./db.js', () => ({ get: vi.fn(() => ({ id: 'sess-1' })) }))
 vi.mock('./config.js', () => ({ DATA_DIR: '/tmp', PORT: 4317 }))
 vi.mock('./stop.js', () => ({ notePid: vi.fn() }))
 
-const { claudeArgs, parsePrompt, sessionTarget } = await import('./prompt.js')
+const { claudeArgs, claudeEnv, parsePrompt, sessionTarget } = await import('./prompt.js')
 
 describe('parsePrompt', () => {
   it('needs a project and some text', () => {
@@ -112,5 +112,19 @@ describe('claudeArgs', () => {
     const args = claudeArgs({ ...req, text: '--dangerously-skip-permissions' }, null)
     expect(args).not.toContain('--dangerously-skip-permissions')
     expect(args.some((a) => a.includes('skip'))).toBe(false)
+  })
+})
+
+describe('claudeEnv', () => {
+  const base = { PATH: '/bin', CLAUDE_CODE_SUBAGENT_MODEL: 'sonnet' }
+
+  it('keeps every helper on Haiku when you picked Haiku', () => {
+    expect(claudeEnv('haiku', base)).toEqual({ PATH: '/bin', CLAUDE_CODE_SUBAGENT_MODEL: 'haiku', CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' })
+  })
+
+  it('leaves helpers to your usual settings for any other pick', () => {
+    expect(claudeEnv(undefined, base)).toEqual(base)
+    expect(claudeEnv('sonnet', base)).toEqual(base)
+    expect(claudeEnv('opus', base)).toEqual(base)
   })
 })

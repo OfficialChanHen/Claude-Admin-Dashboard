@@ -76,6 +76,16 @@ export function claudeArgs(req: PromptRequest, resumeId: string | null, newId?: 
   return args
 }
 
+/**
+ * Picking Haiku keeps the whole task cheap: its helpers run on Haiku too,
+ * even ones asked for on a bigger model. Other picks leave helpers to your
+ * usual settings.
+ */
+export function claudeEnv(model: Model | undefined, base: NodeJS.ProcessEnv = process.env) {
+  if (model !== 'haiku') return base
+  return { ...base, CLAUDE_CODE_SUBAGENT_MODEL: 'haiku', CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' }
+}
+
 /** The project's latest session that is not busy right now, to carry on from. */
 export function resumableSession(projectId: string) {
   const row = get<{ id: string }>(
@@ -145,7 +155,7 @@ export function startPrompt(
   const log = fs.openSync(path.join(DATA_DIR, 'prompts.log'), 'a')
   fs.writeSync(log, `\n[${new Date().toISOString()}] ${req.projectId} ${req.mode}${resumeId ? ` ${resumeId}` : ''}\n`)
   const sessionId = resumeId ?? opts.newId ?? randomUUID()
-  const child = spawn(bin, claudeArgs(req, resumeId, sessionId, opts.extraArgs), { cwd, detached: true, stdio: ['pipe', 'ignore', log] })
+  const child = spawn(bin, claudeArgs(req, resumeId, sessionId, opts.extraArgs), { cwd, env: claudeEnv(req.model), detached: true, stdio: ['pipe', 'ignore', log] })
   fs.closeSync(log)
   child.stdin?.on('error', () => {})
   child.stdin?.end(req.text)
