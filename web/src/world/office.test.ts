@@ -41,10 +41,17 @@ describe('buildOffice', () => {
     rects.forEach((a, i) => rects.forEach((b, j) => i !== j && expect(overlaps(a, b)).toBe(false)))
   })
 
-  it('puts the hub in the middle and the first projects next to it', () => {
+  it.each([0, 3, 12, 30])('puts the hub in the front row, just inside the front door, with %i projects', (n) => {
+    const o = buildOffice(infos(n))
+    expect(o.hub.cell).toEqual({ c: Math.floor((o.grid.cols - 1) / 2), r: o.grid.rows - 1 })
+    // Nothing but the front corridor between the hub and the door.
+    expect(o.door.x).toBe(o.hub.exitX)
+    for (const a of rooms(o)) expect(a.rect.y).toBeLessThanOrEqual(o.hub.rect.y)
+  })
+
+  it('puts the first projects next to the hub', () => {
     const o = buildOffice(infos(12))
-    const center = { c: Math.floor((o.grid.cols - 1) / 2), r: Math.floor((o.grid.rows - 1) / 2) }
-    expect(o.hub.cell).toEqual(center)
+    const center = o.hub.cell
     const dist = (c: { c: number; r: number }) => Math.abs(c.c - center.c) + Math.abs(c.r - center.r)
     expect(dist(o.pods[0].cell)).toBe(1)
     for (let i = 1; i < o.pods.length; i++) expect(dist(o.pods[i].cell)).toBeGreaterThanOrEqual(dist(o.pods[i - 1].cell))
@@ -261,17 +268,18 @@ describe('rooms', () => {
 
   it('skips a gap to the nearest room that way', () => {
     // Eight projects, the hub and the boss on a 4 by 3 grid: the boss is next
-    // to the hub at (1, 1) and rooms fill outward from it, so the far corners
-    // of the last column stay empty.
+    // to the hub at (1, 2) in the front row and rooms fill outward from it, so
+    // the back two cells of the last column stay empty.
     const big = buildOffice(infos(8))
     expect(big.grid).toEqual({ cols: 4, rows: 3 })
     const at = (c: number, r: number) => rooms(big).find((a) => a.cell.c === c && a.cell.r === r)
-    expect(at(2, 1)?.id).toBe(BOSS)
+    expect(at(2, 2)?.id).toBe(BOSS)
     expect(at(3, 0)).toBeUndefined()
-    expect(at(3, 2)).toBeUndefined()
-    expect(neighbor(big, at(2, 0)!.id, 'right')?.cell).toEqual({ c: 3, r: 1 })
-    expect(neighbor(big, at(2, 2)!.id, 'right')?.cell).toEqual({ c: 3, r: 1 })
-    expect(neighbor(big, at(3, 1)!.id, 'right')).toBeNull()
+    expect(at(3, 1)).toBeUndefined()
+    expect(neighbor(big, at(2, 0)!.id, 'right')?.cell).toEqual({ c: 3, r: 2 })
+    expect(neighbor(big, at(2, 1)!.id, 'right')?.cell).toEqual({ c: 3, r: 2 })
+    expect(neighbor(big, at(3, 2)!.id, 'up')?.cell).toEqual({ c: 2, r: 1 })
+    expect(neighbor(big, at(3, 2)!.id, 'right')).toBeNull()
   })
 
   it.each([0, 1, 3, 8, 12, 30])('always gives the boss an office of their own next to the hub, with %i projects', (n) => {

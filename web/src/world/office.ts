@@ -199,7 +199,8 @@ const DECOR: { kind: DecorKind; c: number; r: number }[][] = [
 
 export function buildOffice(infos: PodInfo[]): Office {
   const grid = gridFor(infos.length + 1)
-  const hubCell = { c: Math.floor((grid.cols - 1) / 2), r: Math.floor((grid.rows - 1) / 2) }
+  // The hub is in the front row, so people come in the front door straight to reception.
+  const hubCell = { c: Math.floor((grid.cols - 1) / 2), r: grid.rows - 1 }
   // The boss's office is next door to the hub, on its right. The hub is never in
   // the last column, so there is always room for it.
   const bossCell = { c: hubCell.c + 1, r: hubCell.r }
