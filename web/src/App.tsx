@@ -550,6 +550,7 @@ export function App() {
           focus={focus}
           room={room}
           selected={selected}
+          followId={asking?.sessionId ?? selected}
           limits={meter}
           connected={connected}
           loading={backfill ? backfill.done / Math.max(1, backfill.total) : null}

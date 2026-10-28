@@ -107,6 +107,15 @@ export class Camera {
     this.clamp()
   }
 
+  /**
+   * The centre that puts world point (x, y) in the middle of what is left of
+   * the screen at zoom P, when insetX device px on the left and insetY on top
+   * are covered.
+   */
+  centreOn(x: number, y: number, P: number, insetX = 0, insetY = 0) {
+    return { x: x - insetX / 2 / P, y: y - insetY / 2 / P }
+  }
+
   flyTo(x: number, y: number, P?: number) {
     this.target = { x, y, P: P == null ? undefined : Math.min(this.pMax, Math.max(this.pMin, P)) }
   }

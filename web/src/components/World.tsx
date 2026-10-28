@@ -14,6 +14,14 @@ const HUD_TOP = 16
 const HUD_BOTTOM = 120
 // Art px from the pointer down to the feet of the person you carry: you hold them by the shoulders.
 const CARRY_FEET = 12
+// Following someone: the art px around them to fit on screen, how far above
+// their feet their middle is, and the CSS px the chat dock covers on the left.
+const FOLLOW_W = 160
+const FOLLOW_H = 110
+const FOLLOW_MID = 8
+const DOCK_W = 452
+// Space kept above the person for the approval card over their head.
+const ASK_ROOM = 140
 
 export type WorldControl = {
   /** The room a session's senior is standing in right now. */
@@ -34,6 +42,7 @@ export function World({
   focus,
   room,
   selected,
+  followId,
   limits,
   connected,
   loading,
@@ -52,6 +61,8 @@ export function World({
   room: string | null
   /** The session you clicked on. */
   selected: string | null
+  /** The person the camera stays on: the one asking for your OK, or the one you are talking to. */
+  followId: string | null
   limits: FrameUi['limits']
   connected: boolean
   loading: number | null
@@ -63,8 +74,8 @@ export function World({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // The loop reads the latest props through a ref, so it never restarts.
-  const props = useRef({ projects, focus, room, selected, limits, connected, loading, previews, onHit, onRoom, onDoorDrop })
-  props.current = { projects, focus, room, selected, limits, connected, loading, previews, onHit, onRoom, onDoorDrop }
+  const props = useRef({ projects, focus, room, selected, followId, limits, connected, loading, previews, onHit, onRoom, onDoorDrop })
+  props.current = { projects, focus, room, selected, followId, limits, connected, loading, previews, onHit, onRoom, onDoorDrop }
 
   useEffect(() => {
     const canvas = canvasRef.current!
@@ -96,6 +107,19 @@ export function World({
     let inRoom: Area | null = null
     let roomKey = ''
     let roomP = 0
+    // The person the camera is following, if anyone.
+    let following: string | null = null
+
+    /** Flies to frame the room you are in. */
+    const frameRoom = (room: Area, fly: boolean) => {
+      const b = roomBounds(room)
+      const top = HUD_TOP * dpr
+      const bottom = HUD_BOTTOM * dpr
+      const P = cam.fitP(b.w, b.h, top + bottom, 24 * dpr)
+      roomP = P
+      cam.setBounds(b)
+      if (fly) cam.flyTo(b.x + b.w / 2, b.y + b.h / 2 + (bottom - top) / 2 / P, P)
+    }
 
     /** Frames the chosen room, or zooms back out to the floor when you step out. */
     const applyRoom = () => {
@@ -108,19 +132,37 @@ export function World({
       restoring = false
       roomKey = key
       inRoom = id ? roomById(office, id) : null
+      // While following someone the camera stays on them; the room is framed when you step back out.
+      if (following) return
       if (!inRoom) {
         cam.setBounds(null)
         if (was && !quiet) cam.flyTo(cam.x, cam.y, Math.min(cam.P, Math.round(2 * dpr)))
         return
       }
-      const b = roomBounds(inRoom)
-      const top = HUD_TOP * dpr
-      const bottom = HUD_BOTTOM * dpr
-      const P = cam.fitP(b.w, b.h, top + bottom, 24 * dpr)
-      roomP = P
-      cam.setBounds(b)
-      if (quiet) return
-      cam.flyTo(b.x + b.w / 2, b.y + b.h / 2 + (bottom - top) / 2 / P, P)
+      frameRoom(inRoom, !quiet)
+    }
+
+    /** Keeps the camera on the person you are talking to or answering, and steps back out after. */
+    const applyFollow = () => {
+      const p = props.current
+      const s = p.followId ? model.sprites.get(p.followId) : undefined
+      if (s?.placed) {
+        const start = following !== p.followId
+        following = p.followId
+        // Rooms hold the camera inside them; someone walking out would drag it back.
+        if (start) cam.setBounds(null)
+        const P = start ? Math.max(cam.P, cam.fitP(FOLLOW_W, FOLLOW_H, ASK_ROOM * dpr)) : cam.resting.P
+        const wide = canvas.clientWidth > 900
+        const left = p.selected === p.followId && wide ? DOCK_W * dpr : 0
+        const top = p.selected === p.followId ? 0 : ASK_ROOM * dpr
+        const at = cam.centreOn(s.x, s.y - FOLLOW_MID, P, left, top)
+        cam.flyTo(at.x, at.y, start ? P : undefined)
+        return
+      }
+      if (!following) return
+      following = null
+      if (inRoom) frameRoom(inRoom, true)
+      else cam.flyTo(cam.x, cam.y, Math.min(cam.P, Math.round(2 * dpr)))
     }
 
     loadSheets().then((s) => {
@@ -185,6 +227,7 @@ export function World({
         model.tick(dt)
         extras.tick(dt, model)
         extras.weather.update(props.current.limits.fiveHour, Date.now())
+        if (office) applyFollow()
         cam.step(dt)
         if (t - lastDraw < FRAME_MS) return
         lastDraw = t

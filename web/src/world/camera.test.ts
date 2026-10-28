@@ -192,3 +192,30 @@ describe('Camera in a room', () => {
     expect(c.x).toBeLessThan(room.x)
   })
 })
+
+describe('Camera following someone', () => {
+  it('puts them in the middle of the part of the screen left uncovered', () => {
+    const c = cam()
+    c.P = 4
+    const at = c.centreOn(800, 500, 4, 400, 100)
+    c.x = at.x
+    c.y = at.y
+    const s = c.toScreen(800, 500)
+    expect(s.x).toBe((400 + 1000) / 2)
+    expect(s.y).toBe((100 + 600) / 2)
+  })
+
+  it('chases someone who keeps walking, flying to them every frame', () => {
+    const c = cam()
+    c.flyTo(1000, 600, 4)
+    c.step(1 / 30)
+    let x = 1000
+    for (let i = 0; i < 120; i++) {
+      x += 1
+      c.flyTo(x, 600)
+      c.step(1 / 30)
+    }
+    expect(c.P).toBe(4)
+    expect(Math.abs(c.x - x)).toBeLessThan(5)
+  })
+})
