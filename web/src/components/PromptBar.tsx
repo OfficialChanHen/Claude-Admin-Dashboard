@@ -109,99 +109,133 @@ export function PromptBar({
     }
   }
 
+  const ctxLabel = target ? `Stop talking to ${name}` : chat ? 'Stop chatting' : 'Stop prompting this project'
+  const sendLabel = busy ? 'Sending' : sendWhen === 'spare' ? 'Queue' : 'Send'
+
+  // Laid out like the Claude Code extension's input: the text on top, and a footer
+  // inside the same box with the options on the left and who it goes to beside Send.
   return (
     <form
-      className="prompt-bar hud-plate"
+      className="prompt-bar prompt-box"
       onSubmit={(e) => {
         e.preventDefault()
         send()
       }}
     >
-      <div className="prompt-to">
-        {project && <span className="zone" style={{ background: zoneColor(project.color) }} />}
-        <span className="prompt-name">
-          {name}
-          {target && project && <span className="prompt-sub">{project.name}</span>}
-          {chat && <span className="prompt-sub">about no project</span>}
-        </span>
+      <textarea
+        ref={ref}
+        className="prompt-input"
+        rows={1}
+        value={text}
+        placeholder={target?.busy ? `${name} is still working. You can send this once they finish.` : target ? `What should ${name} do next?` : chat ? 'Ask anything. It is not about any project.' : `What should ${name} do?`}
+        aria-label={`Prompt for ${name}`}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            send()
+          }
+        }}
+      />
+      <div className="prompt-foot">
         {!target && !chat && (
-          <div className="seg" role="group" aria-label="When">
-            {([['now', 'Now'], ['spare', 'Spare usage']] as const).map(([k, l]) => (
-              <button type="button" key={k} aria-pressed={when === k} onClick={() => setWhen(k)}>
-                {l}
-              </button>
-            ))}
-          </div>
+          <Picker label="When" value={when} onPick={setWhen} options={[
+            ['now', 'Now', 'Starts straight away'],
+            ['spare', 'Spare usage', 'Waits for the last half hour before a reset, if usage is left'],
+          ]} />
         )}
         {!target && when === 'now' && (
-          <div className="seg" role="group" aria-label="Session">
-            {([['new', chat ? 'New chat' : 'New task'], ['continue', 'Continue last']] as const).map(([k, l]) => (
-              <button
-                type="button"
-                key={k}
-                aria-pressed={mode === k}
-                onClick={() => {
-                  setMode(k)
-                  store('hq.prompt.mode', k)
-                }}
-              >
-                {l}
-              </button>
-            ))}
-          </div>
+          <Picker label="Session" value={mode} onPick={(k) => { setMode(k); store('hq.prompt.mode', k) }} options={[
+            ['new', chat ? 'New chat' : 'New task', 'Someone new sits down for it'],
+            ['continue', 'Continue last', 'Carries on the last conversation here'],
+          ]} />
         )}
         {/* Auto runs routine steps without asking; only risky ones and questions come to you. */}
-        {!chat && <div className="seg" role="group" aria-label="What it may do">
-          {([['auto', 'Auto'], ['plan', 'Plan only']] as const).map(([k, l]) => (
-            <button
-              type="button"
-              key={k}
-              aria-pressed={perm === k}
-              onClick={() => {
-                setPerm(k)
-                store('hq.prompt.perm', k)
-              }}
-            >
-              {l}
-            </button>
-          ))}
-        </div>}
-        <div className="seg" role="group" aria-label="Model">
-          {MODELS.map(([k, l]) => (
-            <button
-              type="button"
-              key={k}
-              aria-pressed={model === k}
-              onClick={() => {
-                setModel(k)
-                if (rememberModel(!!target)) store('hq.prompt.model', k)
-              }}
-            >
-              {l}
-            </button>
-          ))}
-        </div>
-        <button type="button" className="icon-btn" aria-label={target ? `Stop talking to ${name}` : chat ? 'Stop chatting' : 'Stop prompting this project'} onClick={onClear}><PixelIcon name="close" size={12} /></button>
-      </div>
-      <div className="prompt-row">
-        <textarea
-          ref={ref}
-          className="input prompt-input"
-          rows={1}
-          value={text}
-          placeholder={target?.busy ? `${name} is still working. You can send this once they finish.` : target ? `What should ${name} do next?` : chat ? 'Ask anything. It is not about any project.' : `What should ${name} do?`}
-          aria-label={`Prompt for ${name}`}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              send()
-            }
-          }}
-        />
-        <button className="btn primary" type="submit" disabled={busy || !text.trim() || !!target?.busy}>{busy ? 'Sending...' : sendWhen === 'spare' ? 'Queue' : 'Send'}</button>
+        {!chat && (
+          <Picker label="Mode" value={perm} onPick={(k) => { setPerm(k); store('hq.prompt.perm', k) }} options={[
+            ['auto', 'Auto mode', 'Runs routine steps without asking. Risky ones and questions come to you'],
+            ['plan', 'Plan mode', 'Makes a plan and changes nothing until you say go'],
+          ]} />
+        )}
+        <Picker label="Model" value={model} onPick={(k) => { setModel(k); if (rememberModel(!!target)) store('hq.prompt.model', k) }} options={MODELS.map(([k, l]) => [k, l, k === 'default' ? 'Your usual Claude Code model' : ''] as const)} />
+        <span className="prompt-ctx" title={target && project ? `${name} in ${project.name}` : name}>
+          {project && <span className="zone" style={{ background: zoneColor(project.color) }} />}
+          <span className="prompt-name">{name}</span>
+          {target && project && <span className="prompt-sub">{project.name}</span>}
+          {chat && <span className="prompt-sub">no project</span>}
+          <button type="button" className="prompt-ctx-x" aria-label={ctxLabel} title={ctxLabel} onClick={onClear}><PixelIcon name="close" size={8} /></button>
+        </span>
+        <button className="prompt-send" type="submit" disabled={busy || !text.trim() || !!target?.busy} aria-label={sendLabel} title={`${sendLabel} (Enter)`}>
+          <PixelIcon name={busy ? 'dots' : 'up'} size={14} />
+        </button>
       </div>
       {note && <div className={`prompt-note ${note.bad ? 'bad' : ''}`} role={note.bad ? 'alert' : 'status'}>{note.text}</div>}
     </form>
+  )
+}
+
+/** A footer option that opens a small menu above it, as the extension's mode and model pickers do. */
+function Picker<T extends string>({
+  label,
+  value,
+  options,
+  onPick,
+}: {
+  label: string
+  value: T
+  options: readonly (readonly [T, string, string])[]
+  onPick: (v: T) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const away = (e: PointerEvent) => {
+      if (!box.current?.contains(e.target as Node)) setOpen(false)
+    }
+    window.addEventListener('pointerdown', away)
+    return () => window.removeEventListener('pointerdown', away)
+  }, [open])
+
+  const current = options.find(([k]) => k === value)
+  return (
+    <span
+      className="picker"
+      ref={box}
+      onKeyDown={(e) => {
+        // Escape shuts the menu, not the conversation behind it.
+        if (e.key === 'Escape' && open) {
+          e.stopPropagation()
+          setOpen(false)
+        }
+      }}
+    >
+      <button type="button" className="picker-btn" aria-haspopup="menu" aria-expanded={open} aria-label={`${label}: ${current?.[1]}`} onClick={() => setOpen((o) => !o)}>
+        {current?.[1]}
+        <PixelIcon name="chevron" size={8} />
+      </button>
+      {open && (
+        <div className="picker-menu" role="menu" aria-label={label}>
+          <div className="picker-title">{label}</div>
+          {options.map(([k, l, d]) => (
+            <button
+              type="button"
+              key={k}
+              role="menuitemradio"
+              aria-checked={k === value}
+              autoFocus={k === value}
+              onClick={() => {
+                onPick(k)
+                setOpen(false)
+              }}
+            >
+              <span className="picker-label">{l}{d && <span className="picker-desc">{d}</span>}</span>
+              {k === value && <PixelIcon name="check" size={10} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
   )
 }

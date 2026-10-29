@@ -3,9 +3,8 @@ import { api, type ChatLine, type Project } from '../lib/api'
 import { chatBlocks, mergeChat } from '../lib/chat'
 import { CHAT_WIDTH_DEFAULT, clampChatWidth } from '../lib/chatWidth'
 import { clock } from '../lib/format'
-import { toolIcon } from '../lib/pixelIcons'
 import type { WorldModel } from '../world/model'
-import { taskLabel } from '../world/tasks'
+import { shortTool, taskLabel } from '../world/tasks'
 import { SENIORS, YOU, lookOf } from '../world/render'
 import { Markdown } from './Markdown'
 import { PixelIcon } from './PixelIcon'
@@ -160,7 +159,7 @@ export function ChatPanel({
   return (
     <aside className="chat-panel" role="dialog" aria-labelledby="chat-title" ref={panel}>
       <div className="chat-resize" role="separator" aria-orientation="vertical" aria-label="Resize the conversation" onPointerDown={startResize} />
-      <div className="game-window-head">
+      <div className="game-window-head chat-head">
         <div className="chat-who">
           <h2 className="panel-title" id="chat-title">{title}</h2>
           {project && <span className="proj-meta">{project.name}</span>}
@@ -201,15 +200,18 @@ export function ChatPanel({
                         return n
                       })}
                     >
-                      {expanded ? 'Show fewer steps' : `${b.steps.length} steps${failed ? `, ${failed} failed` : ''}. Show all`}
+                      <PixelIcon name="chevron" size={10} />
+                      {expanded ? 'Show fewer steps' : `${b.steps.length} steps${failed ? `, ${failed} failed` : ''}`}
                     </button>
                   )}
+                  {/* Like the extension's tool lines: a dot for how it went, the tool, then what it was given */}
                   {shown.map((s) => (
-                    <div key={s.key} className={`chat-step ${s.isError ? 'bad' : ''}`} title={`${s.tool} ${s.summary}`}>
-                      <PixelIcon name={toolIcon(s.tool)} size={12} />
-                      <span>{taskLabel(s.tool, s.summary, 60)}</span>
-                      {s.running && <span className="chip state-working pulse">Running</span>}
-                      {s.isError && <span className="chip err">Failed</span>}
+                    <div key={s.key} className={`chat-step ${s.isError ? 'bad' : s.running ? 'run' : 'ok'}`} title={taskLabel(s.tool, s.summary, 200)}>
+                      <span className="tl-dot" aria-hidden />
+                      <b>{shortTool(s.tool)}</b>
+                      {s.summary && <span className="step-arg">{s.summary.replace(/\s+/g, ' ')}</span>}
+                      {s.running && <span className="sr-only">Running</span>}
+                      {s.isError && <span className="step-bad">Failed</span>}
                     </div>
                   ))}
                 </li>
@@ -217,7 +219,7 @@ export function ChatPanel({
             }
             return (
               <li key={b.key} className={`chat-msg ${b.kind}`}>
-                <Portrait row={b.kind === 'you' ? YOU : look} label={b.kind === 'you' ? 'You' : title} />
+                <Portrait row={b.kind === 'you' ? YOU : look} scale={2} label={b.kind === 'you' ? 'You' : title} />
                 <div className="chat-body">
                   <div className="chat-meta">{b.kind === 'you' ? 'You' : 'Claude'} <span>{clock(b.ts)}</span></div>
                   {b.kind === 'you' ? (
@@ -230,10 +232,12 @@ export function ChatPanel({
             )
           })}
         </ol>
-        <div className={`chat-status ${status.tone}`} role="status">
-          {status.tone === 'think' && <span className="think-dots" aria-hidden><i /><i /><i /></span>}
-          {status.text}
-        </div>
+        {status.text && (
+          <div className={`chat-status ${status.tone}`} role="status">
+            {(status.tone === 'think' || status.tone === 'work') && <span className="spark" aria-hidden><PixelIcon name="spark" size={12} /></span>}
+            {status.text}{status.tone === 'think' || status.tone === 'work' ? '...' : ''}
+          </div>
+        )}
       </div>
     </aside>
   )
