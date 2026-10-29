@@ -1,11 +1,16 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 // The prompt module reads the session list from the database; tests use a stand-in.
-vi.mock('./db.js', () => ({ get: vi.fn(() => ({ id: 'sess-1' })) }))
+vi.mock('./db.js', () => ({ get: vi.fn(() => ({ id: 'sess-1' })), run: vi.fn() }))
 vi.mock('./config.js', () => ({ DATA_DIR: '/tmp', PORT: 4317 }))
-vi.mock('./stop.js', () => ({ notePid: vi.fn() }))
+vi.mock('./stop.js', () => ({ notePid: vi.fn(), isRunning: vi.fn() }))
+vi.mock('./transcripts.js', () => ({ setSessionState: vi.fn(), noteJoined: vi.fn() }))
 
-const { claudeArgs, claudeEnv, parsePrompt, sessionTarget } = await import('./prompt.js')
+const { claudeArgs, claudeEnv, joinTask, parsePrompt, sessionTarget, startPrompt, turnEnded, userLine } = await import('./prompt.js')
+const { noteJoined } = await import('./transcripts.js')
 
 describe('parsePrompt', () => {
   it('needs a project and some text', () => {
@@ -80,28 +85,28 @@ describe('claudeArgs', () => {
   const req = { projectId: 'p', text: 'fix the login', mode: 'new' as const, permissionMode: 'acceptEdits' as const }
 
   it('runs headless with the chosen permission mode', () => {
-    expect(claudeArgs(req, null)).toEqual(['-p', '--permission-mode', 'acceptEdits'])
+    expect(claudeArgs(req, null)).toEqual(['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits'])
   })
 
   it('resumes only when continuing and there is a session to continue', () => {
-    expect(claudeArgs({ ...req, mode: 'continue' }, 'sess-1').slice(0, 5)).toEqual(['-p', '--permission-mode', 'acceptEdits', '--resume', 'sess-1'])
+    expect(claudeArgs({ ...req, mode: 'continue' }, 'sess-1').slice(0, 10)).toEqual(['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--resume', 'sess-1'])
     expect(claudeArgs({ ...req, mode: 'continue' }, null)).not.toContain('--resume')
     expect(claudeArgs(req, 'sess-1')).not.toContain('--resume')
   })
 
   it('runs on the model you picked, or your usual one when you picked none', () => {
-    expect(claudeArgs({ ...req, model: 'sonnet' }, null)).toEqual(['-p', '--permission-mode', 'acceptEdits', '--model', 'sonnet'])
+    expect(claudeArgs({ ...req, model: 'sonnet' }, null)).toEqual(['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--model', 'sonnet'])
     expect(claudeArgs(req, null)).not.toContain('--model')
   })
 
   it('names a new session up front, so it can be stopped later', () => {
-    expect(claudeArgs(req, null, 'new-id').slice(0, 5)).toEqual(['-p', '--permission-mode', 'acceptEdits', '--session-id', 'new-id'])
+    expect(claudeArgs(req, null, 'new-id').slice(0, 10)).toEqual(['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--session-id', 'new-id'])
     expect(claudeArgs({ ...req, mode: 'continue' }, 'sess-1', 'sess-1')).not.toContain('--session-id')
   })
 
   it('sends permission requests to HQ, for the session it runs', () => {
     const args = claudeArgs(req, null, 'new-id')
-    expect(args.slice(5, 7)).toEqual(['--permission-prompt-tool', 'mcp__claude_hq__approve'])
+    expect(args.slice(10, 12)).toEqual(['--permission-prompt-tool', 'mcp__claude_hq__approve'])
     // --mcp-config takes several values, so nothing may follow it.
     expect(args.at(-2)).toBe('--mcp-config')
     expect(JSON.parse(args.at(-1)!)).toEqual({ mcpServers: { claude_hq: { type: 'http', url: 'http://127.0.0.1:4317/mcp/new-id' } } })
@@ -112,6 +117,53 @@ describe('claudeArgs', () => {
     const args = claudeArgs({ ...req, text: '--dangerously-skip-permissions' }, null)
     expect(args).not.toContain('--dangerously-skip-permissions')
     expect(args.some((a) => a.includes('skip'))).toBe(false)
+  })
+})
+
+describe('stream JSON', () => {
+  it('sends each prompt as one user line', () => {
+    const line = userLine('fix it\nplease')
+    expect(line.endsWith('\n')).toBe(true)
+    expect(line.slice(0, -1)).not.toContain('\n')
+    expect(JSON.parse(line)).toEqual({ type: 'user', message: { role: 'user', content: 'fix it\nplease' } })
+  })
+
+  it('sees the end of a turn, and nothing else', () => {
+    expect(turnEnded('{"type":"assistant"}\n{"type":"result","subtype":"success"}')).toBe(true)
+    expect(turnEnded('{"type":"assistant","message":{"content":"the result"}}')).toBe(false)
+    expect(turnEnded('{"type":"res')).toBe(false)
+  })
+})
+
+describe('prompting mid-task', () => {
+  it('hands a prompt to a running task until its turn ends, then lets it finish', async () => {
+    // A stand-in for claude: ends its turn soon, then keeps every line it got until stdin closes.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-mid-'))
+    const got = path.join(dir, 'got.jsonl')
+    const bin = path.join(dir, 'claude')
+    fs.writeFileSync(bin, `#!/usr/bin/env node
+const fs = require('fs')
+let all = ''
+process.stdin.on('data', (d) => (all += d))
+process.stdin.on('end', () => fs.writeFileSync(${JSON.stringify(got)}, all))
+setTimeout(() => console.log(JSON.stringify({ type: 'result', subtype: 'success' })), 300)
+`, { mode: 0o755 })
+    process.env.HQ_CLAUDE_BIN = bin
+    const exited = new Promise<void>((resolve) => {
+      startPrompt({ projectId: 'p', text: 'first', mode: 'new', permissionMode: 'auto' }, dir, undefined, { newId: 'mid-1', onExit: resolve })
+    })
+    expect(joinTask('mid-1', 'also this')).toBe(true)
+    // It is in the chat from now, not from when Claude reads it.
+    expect(noteJoined).toHaveBeenCalledWith('mid-1', 'p', 'also this')
+    await exited
+    expect(fs.readFileSync(got, 'utf8').trim().split('\n').map((l) => JSON.parse(l).message.content)).toEqual(['first', 'also this'])
+    expect(joinTask('mid-1', 'too late')).toBe(false)
+    expect(noteJoined).toHaveBeenCalledTimes(1)
+    delete process.env.HQ_CLAUDE_BIN
+  }, 10_000)
+
+  it('cannot reach a session HQ is not running', () => {
+    expect(joinTask('someone-in-a-terminal', 'hi')).toBe(false)
   })
 })
 

@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { watch } from 'chokidar'
 import { TRANSCRIPTS_DIR } from './config.js'
 import { all, get, run, tx } from './db.js'
@@ -287,9 +288,23 @@ function addPrompt(ctx: Ctx, e: Entry, s: SessionRow, text: string, ts: number) 
   if (!res.changes) return
   run('UPDATE sessions SET current_prompt = ? WHERE id = ?', e.uuid, s.id)
   s.current_prompt = e.uuid
-  emit(ctx, { kind: 'prompt', sessionId: s.id, projectId: s.project_id, agentId: null, text: text.slice(0, 500), ts })
-  nameAfterPrompt(ctx, s, text, ts)
+  // One HQ handed over mid-task was in the chat from the moment you sent it.
+  const joined = get<{ id: string }>('SELECT id FROM joined WHERE session_id = ? AND text = ? AND seen = 0 AND ts <= ? ORDER BY ts LIMIT 1', s.id, text.trim(), ts)
+  if (joined) run('UPDATE joined SET seen = 1 WHERE id = ?', joined.id)
+  else {
+    emit(ctx, { kind: 'prompt', sessionId: s.id, projectId: s.project_id, agentId: null, text: text.slice(0, 500), ts })
+    nameAfterPrompt(ctx, s, text, ts)
+  }
   if (ctx.live) setSessionState(s.id, 'working')
+}
+
+/**
+ * A prompt HQ just handed to a running task. It goes in the chat now, though
+ * Claude Code logs it only after the step it is on.
+ */
+export function noteJoined(sessionId: string, projectId: string | null, text: string, ts = Date.now()) {
+  run('INSERT INTO joined (id, session_id, ts, text) VALUES (?, ?, ?, ?)', randomUUID(), sessionId, ts, text)
+  emit({ file: '', sessionId, agentId: null, live: true }, { kind: 'prompt', sessionId, projectId, agentId: null, text: text.slice(0, 500), ts })
 }
 
 /**

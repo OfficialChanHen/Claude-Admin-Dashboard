@@ -145,7 +145,7 @@ export const api = {
   git: () => req<GitInfo[]>('/api/git'),
   previews: () => req<Preview[]>('/api/previews'),
   prompt: (body: { projectId: string; sessionId?: string; chat?: boolean; text: string; mode: 'new' | 'continue'; permissionMode: 'auto' | 'plan'; when?: 'now' | 'spare'; model?: 'fable' | 'opus' | 'sonnet' | 'haiku' }) =>
-    req<{ ok: true; resumed?: string | null; queued?: string }>('/api/prompt', { method: 'POST', body: JSON.stringify(body) }),
+    req<{ ok: true; resumed?: string | null; queued?: string; joined?: true }>('/api/prompt', { method: 'POST', body: JSON.stringify(body) }),
   budget: () => req<Budget>('/api/budget'),
   hierarchy: () => req<Hierarchy>('/api/hierarchy'),
   unqueue: (id: string) => req<{ ok: true }>(`/api/budget/queue/${encodeURIComponent(id)}`, { method: 'DELETE' }),

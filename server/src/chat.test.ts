@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 // The log reader shares helpers with the transcript module, which opens the database; tests use a stand-in.
 vi.mock('./db.js', () => ({ get: vi.fn(), run: vi.fn(), all: vi.fn(() => []), tx: vi.fn((f: () => void) => f()) }))
 
-const { chatFromLines } = await import('./chat.js')
+const { chatFromLines, withJoined } = await import('./chat.js')
 
 const SID = 'sess-1'
 const line = (o: object) => JSON.stringify(o)
@@ -35,5 +35,27 @@ describe('chatFromLines', () => {
       line({ type: 'summary', summary: 'x' }),
     ]
     expect(chatFromLines(SID, lines, null)).toEqual([])
+  })
+})
+
+describe('withJoined', () => {
+  const you = (s: number, text: string) => ({ kind: 'you' as const, key: `p-${SID}-${Date.parse(t(s))}`, ts: Date.parse(t(s)), text })
+  const step = (s: number) => ({ kind: 'step' as const, key: `tu${s}`, ts: Date.parse(t(s)), tool: 'Read', summary: 'a.ts', isError: false })
+
+  it('shows a prompt sent mid-task at the time you sent it, not when Claude read it', () => {
+    const chat = withJoined(SID, [you(0, 'fix it'), step(1), step(3), you(4, 'also the tests')], [{ ts: Date.parse(t(2)), text: 'also the tests' }])
+    expect(chat.map((c) => c.key)).toEqual([`p-${SID}-${Date.parse(t(0))}`, 'tu1', `p-${SID}-${Date.parse(t(2))}`, 'tu3'])
+  })
+
+  it('shows a prompt Claude has not read yet', () => {
+    const chat = withJoined(SID, [you(0, 'fix it'), step(1)], [{ ts: Date.parse(t(2)), text: 'and this' }])
+    expect(chat.at(-1)).toMatchObject({ kind: 'you', text: 'and this', key: `p-${SID}-${Date.parse(t(2))}` })
+  })
+
+  it('keeps the same words asked again later', () => {
+    const chat = withJoined(SID, [you(0, 'go on'), you(4, 'go on')], [{ ts: Date.parse(t(2)), text: 'go on' }])
+    expect(chat.map((c) => c.ts)).toEqual([0, 2].map((s) => Date.parse(t(s))))
+    expect(withJoined(SID, [you(0, 'go on'), you(3, 'go on'), you(5, 'go on')], [{ ts: Date.parse(t(2)), text: 'go on' }]).map((c) => c.ts))
+      .toEqual([0, 2, 5].map((s) => Date.parse(t(s))))
   })
 })

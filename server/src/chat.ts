@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { TRANSCRIPTS_DIR } from './config.js'
+import { all } from './db.js'
 import { isRealPrompt, summarize } from './transcripts.js'
 
 // A session's conversation, read straight from its log: what you asked, what
@@ -61,6 +62,24 @@ export function chatFromLines(sessionId: string, lines: string[], cwd: string | 
   return out.slice(-MAX_LINES)
 }
 
+/**
+ * Puts the prompts HQ handed over mid-task where you sent them. Claude Code
+ * logs one only once it reads it, after the step it was on, so that later
+ * copy is dropped. One not read yet still shows.
+ */
+export function withJoined(sessionId: string, lines: ChatLine[], joined: { ts: number; text: string }[]): ChatLine[] {
+  if (!joined.length) return lines
+  const dropped = new Set<ChatLine>()
+  const out = [...lines]
+  for (const j of [...joined].sort((a, b) => a.ts - b.ts)) {
+    const logged = lines.find((l) => l.kind === 'you' && l.ts >= j.ts && l.text.trim() === j.text && !dropped.has(l))
+    if (logged) dropped.add(logged)
+    out.push({ kind: 'you', key: `p-${sessionId}-${j.ts}`, ts: j.ts, text: j.text })
+  }
+  // A stable sort keeps same-time lines in log order.
+  return out.filter((l) => !dropped.has(l)).sort((a, b) => a.ts - b.ts)
+}
+
 function findLog(sessionId: string) {
   let dirs: string[] = []
   try {
@@ -77,8 +96,9 @@ function findLog(sessionId: string) {
 
 /** `sessionId` must already be checked to be a plain id; it becomes part of a path. */
 export function sessionChat(sessionId: string, cwd: string | null): ChatLine[] {
+  const joined = all<{ ts: number; text: string }>('SELECT ts, text FROM joined WHERE session_id = ?', sessionId)
   const file = findLog(sessionId)
-  if (!file) return []
+  if (!file) return withJoined(sessionId, [], joined)
   const fd = fs.openSync(file, 'r')
   try {
     const size = fs.fstatSync(fd).size
@@ -87,7 +107,10 @@ export function sessionChat(sessionId: string, cwd: string | null): ChatLine[] {
     fs.readSync(fd, buf, 0, buf.length, start)
     const lines = buf.toString('utf8').split('\n')
     if (start > 0) lines.shift() // the first line was cut in half
-    return chatFromLines(sessionId, lines.filter(Boolean), cwd)
+    const chat = chatFromLines(sessionId, lines.filter(Boolean), cwd)
+    // Only the end of a long log is read, so older handed-over prompts stay out too.
+    const from = (start > 0 || chat.length >= MAX_LINES) && chat.length ? chat[0].ts : 0
+    return withJoined(sessionId, chat, joined.filter((j) => j.ts >= from))
   } finally {
     fs.closeSync(fd)
   }

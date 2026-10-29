@@ -6,7 +6,7 @@ import { DATA_DIR, PORT } from './config.js'
 import { get, run } from './db.js'
 import { isRunning, notePid } from './stop.js'
 import { promptToolArgs } from './mcp.js'
-import { setSessionState } from './transcripts.js'
+import { noteJoined, setSessionState } from './transcripts.js'
 
 // Sends a prompt to a project by starting the claude CLI there, headless.
 // It runs on your Pro plan like any other Claude Code session, and its
@@ -49,7 +49,8 @@ export function parsePrompt(body: PromptBody): PromptRequest | { error: string }
 
 /**
  * Where a prompt to one session runs: its project's folder, or the folder it
- * was started in. Someone mid-task is not interrupted; you wait for them.
+ * was started in. Someone mid-task HQ cannot reach (see joinTask) is not
+ * interrupted; you wait for them.
  */
 export function sessionTarget(
   row: { project_id: string | null; cwd: string | null; state: string } | undefined,
@@ -62,12 +63,32 @@ export function sessionTarget(
   return { cwd, projectId: row.project_id ?? '' }
 }
 
+const STREAM_ARGS = ['--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose']
+
+/** One prompt as a line of the CLI's stream JSON input. */
+export function userLine(text: string) {
+  return JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n'
+}
+
+/** Whether a chunk of the CLI's stream JSON output holds the end of a turn. */
+export function turnEnded(chunk: string) {
+  return chunk.split('\n').some((l) => {
+    if (!l.includes('"result"')) return false
+    try {
+      return JSON.parse(l).type === 'result'
+    } catch {
+      return false
+    }
+  })
+}
+
 /**
  * The CLI flags. The prompt itself goes in on stdin, never as an argument,
  * so a prompt that looks like a flag can never be read as one.
  */
 export function claudeArgs(req: PromptRequest, resumeId: string | null, newId?: string, extra: string[] = []) {
-  const args = ['-p', '--permission-mode', req.permissionMode, ...extra]
+  // Prompts go in as stream JSON so more can follow while the task runs.
+  const args = ['-p', ...STREAM_ARGS, '--permission-mode', req.permissionMode, ...extra]
   if (req.model) args.push('--model', req.model)
   const resuming = req.mode === 'continue' ? resumeId : null
   if (resuming) args.push('--resume', resuming)
@@ -114,7 +135,21 @@ export function runningPrompts() {
 }
 
 // Sessions HQ is running headless right now, and the project each belongs to.
-const headless = new Map<string, { projectId: string; cwd: string; taskId: string }>()
+// `input` is the running task's stdin while it still takes more prompts.
+const headless = new Map<string, { projectId: string; cwd: string; taskId: string; input?: NodeJS.WritableStream }>()
+
+/**
+ * Hands a prompt to a task HQ is running, mid-task. Claude reads it after the
+ * step it is on and carries on with it in mind. False when HQ cannot reach
+ * the task: it was started in a terminal, before HQ restarted, or has finished.
+ */
+export function joinTask(sessionId: string, text: string) {
+  const task = headless.get(sessionId)
+  if (!task?.input?.writable) return false
+  task.input.write(userLine(text))
+  noteJoined(sessionId, task.projectId || null, text)
+  return true
+}
 
 /** A session HQ started that is still running: its permission requests come through HQ's prompt tool. */
 export function headlessSession(sessionId: string) {
@@ -122,12 +157,12 @@ export function headlessSession(sessionId: string) {
 }
 
 /** Keeps track of a running task until it ends. Returns the call for when it does. */
-function track(taskId: string, sessionId: string, pid: number | undefined, projectId: string, cwd: string, startedAt: number, onExit?: () => void) {
+function track(taskId: string, sessionId: string, pid: number | undefined, projectId: string, cwd: string, startedAt: number, onExit?: () => void, input?: NodeJS.WritableStream) {
   if (pid) {
     running.set(pid, { projectId, startedAt })
     notePid(sessionId, pid, true)
   }
-  headless.set(sessionId, { projectId, cwd, taskId })
+  headless.set(sessionId, { projectId, cwd, taskId, input })
   let ended = false
   return () => {
     if (ended) return
@@ -158,20 +193,48 @@ export function startPrompt(
   const log = fs.openSync(path.join(DATA_DIR, 'prompts.log'), 'a')
   fs.writeSync(log, `\n[${new Date().toISOString()}] ${req.projectId} ${req.mode}${resumeId ? ` ${resumeId}` : ''}\n`)
   const sessionId = resumeId ?? opts.newId ?? randomUUID()
-  const child = spawn(bin, claudeArgs(req, resumeId, sessionId, opts.extraArgs), { cwd, env: claudeEnv(req.model), detached: true, stdio: ['pipe', 'ignore', log] })
-  fs.closeSync(log)
-  child.stdin?.on('error', () => {})
-  child.stdin?.end(req.text)
   const taskId = randomUUID()
+  // The output goes to a file, not a pipe, so the task outlives an HQ restart.
+  // HQ watches it only to see the turn end.
+  const outPath = path.join(DATA_DIR, 'tasks', `${taskId}.jsonl`)
+  fs.mkdirSync(path.dirname(outPath), { recursive: true })
+  const out = fs.openSync(outPath, 'w')
+  const child = spawn(bin, claudeArgs(req, resumeId, sessionId, opts.extraArgs), { cwd, env: claudeEnv(req.model), detached: true, stdio: ['pipe', out, log] })
+  fs.closeSync(log)
+  fs.closeSync(out)
+  child.stdin?.on('error', () => {})
+  child.stdin?.write(userLine(req.text))
+  // Stdin stays open for prompts sent mid-task. Once the turn ends it closes,
+  // so Claude finishes anything still queued and the process exits.
+  let seen = 0
+  const finish = () => {
+    fs.unwatchFile(outPath)
+    child.stdin?.end()
+  }
+  fs.watchFile(outPath, { interval: 1000 }, (cur) => {
+    if (cur.size <= seen) return
+    const fd = fs.openSync(outPath, 'r')
+    const buf = Buffer.alloc(cur.size - seen)
+    fs.readSync(fd, buf, 0, buf.length, seen)
+    fs.closeSync(fd)
+    // A line split across two reads is read again whole next time.
+    const text = buf.toString('utf8')
+    const lastNl = text.lastIndexOf('\n')
+    if (lastNl < 0) return
+    seen += Buffer.byteLength(text.slice(0, lastNl + 1))
+    if (turnEnded(text.slice(0, lastNl))) finish()
+  })
   const now = Date.now()
   run(
     'INSERT INTO tasks (id, session_id, project_id, cwd, permission_mode, model, pid, recovered, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     taskId, sessionId, req.projectId || null, cwd, req.permissionMode, req.model ?? null, child.pid ?? null, opts.recovered ? 1 : 0, now,
   )
-  const done = track(taskId, sessionId, child.pid, req.projectId, cwd, now, opts.onExit)
+  const done = track(taskId, sessionId, child.pid, req.projectId, cwd, now, opts.onExit, child.stdin ?? undefined)
   child.on('exit', (code) => {
     // A clean exit stays at the desk for a reply (see hooks.ts); a crash goes home.
     if (code) setSessionState(sessionId, 'ended')
+    fs.unwatchFile(outPath)
+    fs.rm(outPath, { force: true }, () => {})
     done()
   })
   child.on('error', done)
@@ -189,6 +252,7 @@ export function adoptTask(t: { id: string; sessionId: string; projectId: string 
   const timer = setInterval(() => {
     if (isRunning(t.pid, t.sessionId)) return
     clearInterval(timer)
+    fs.rm(path.join(DATA_DIR, 'tasks', `${t.id}.jsonl`), { force: true }, () => {})
     done()
   }, 5_000)
   timer.unref()

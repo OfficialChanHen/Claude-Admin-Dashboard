@@ -501,7 +501,7 @@ export function App() {
   const chatting = !selected && focus === OTHER
 
   const send = async (text: string, opts: SendOptions) => {
-    if (selected) return void (await api.prompt({ projectId: chatSession?.projectId ?? '', sessionId: selected, text, ...opts }))
+    if (selected) return { joined: !!(await api.prompt({ projectId: chatSession?.projectId ?? '', sessionId: selected, text, ...opts })).joined }
     if (!focus) return
     if (chatting) return void (await api.prompt({ projectId: '', chat: true, text, mode: opts.mode, permissionMode: opts.permissionMode, model: opts.model }))
     await api.prompt({ projectId: focus, text, ...opts })

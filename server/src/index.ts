@@ -12,7 +12,7 @@ import { handleMcp, PROMPT_TOOL, type PromptInput } from './mcp.js'
 import { startLimits, getLimits, acceptStatusLine } from './limits.js'
 import { handleHook } from './hooks.js'
 import { activeSessions, dbStats, listSessions, sessionDetail, usageSummary } from './usage.js'
-import { headlessSession, parsePrompt, resumableChat, runningPrompts, sessionTarget, startPrompt } from './prompt.js'
+import { headlessSession, joinTask, parsePrompt, resumableChat, runningPrompts, sessionTarget, startPrompt } from './prompt.js'
 import { SESSION_ID, stopSession } from './stop.js'
 import { sessionChat } from './chat.js'
 import { hierarchyState, startHierarchy, toolsFor } from './hierarchy.js'
@@ -133,6 +133,8 @@ app.post('/api/prompt', async (req, reply) => {
   // To one person: carries on their conversation, in the folder it ran in.
   if (parsed.sessionId) {
     if (!SESSION_ID.test(parsed.sessionId)) return reply.code(400).send({ error: 'That session is not in HQ.' })
+    // Someone HQ is running mid-task takes it on board after their current step.
+    if (joinTask(parsed.sessionId, parsed.text)) return { ok: true, joined: true }
     const row = get<{ project_id: string | null; cwd: string | null; state: string }>('SELECT project_id, cwd, state FROM sessions WHERE id = ?', parsed.sessionId)
     const path = listProjects().find((p) => p.id === row?.project_id)?.path ?? null
     const target = sessionTarget(row, path)

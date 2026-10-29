@@ -46,7 +46,7 @@ export function PromptBar({
   target: PromptTarget | null
   chat?: boolean
   focusKey: number
-  onSend: (text: string, opts: SendOptions) => Promise<void>
+  onSend: (text: string, opts: SendOptions) => Promise<{ joined: boolean } | void>
   onClear: () => void
 }) {
   const [text, setText] = useState('')
@@ -85,15 +85,17 @@ export function PromptBar({
 
   const send = async () => {
     const t = text.trim()
-    if (!t || busy || target?.busy) return
+    if (!t || busy) return
     setBusy(true)
     setNote(null)
     try {
-      await onSend(t, { mode: target ? 'continue' : sendWhen === 'spare' ? 'new' : mode, permissionMode: perm, when: sendWhen, ...(model === 'default' ? {} : { model }) })
+      const sent = await onSend(t, { mode: target ? 'continue' : sendWhen === 'spare' ? 'new' : mode, permissionMode: perm, when: sendWhen, ...(model === 'default' ? {} : { model }) })
       setText('')
       if (target) setModel('default')
       setNote({
-        text: target
+        text: sent?.joined
+          ? `Sent to ${name} mid-task. They will read it after the step they are on.`
+          : target
           ? `Sent to ${name}. They will get back to their desk shortly.`
           : chat
             ? 'Sent. Someone will sit down in Other folders shortly; click them to read the reply.'
@@ -127,7 +129,7 @@ export function PromptBar({
         className="prompt-input"
         rows={1}
         value={text}
-        placeholder={target?.busy ? `${name} is still working. You can send this once they finish.` : target ? `What should ${name} do next?` : chat ? 'Ask anything. It is not about any project.' : `What should ${name} do?`}
+        placeholder={target?.busy ? `${name} is working. Add something and they will read it after the step they are on.` : target ? `What should ${name} do next?` : chat ? 'Ask anything. It is not about any project.' : `What should ${name} do?`}
         aria-label={`Prompt for ${name}`}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
@@ -165,7 +167,7 @@ export function PromptBar({
           {chat && <span className="prompt-sub">no project</span>}
           <button type="button" className="prompt-ctx-x" aria-label={ctxLabel} title={ctxLabel} onClick={onClear}><PixelIcon name="close" size={8} /></button>
         </span>
-        <button className="prompt-send" type="submit" disabled={busy || !text.trim() || !!target?.busy} aria-label={sendLabel} title={`${sendLabel} (Enter)`}>
+        <button className="prompt-send" type="submit" disabled={busy || !text.trim()} aria-label={sendLabel} title={`${sendLabel} (Enter)`}>
           <PixelIcon name={busy ? 'dots' : 'up'} size={14} />
         </button>
       </div>

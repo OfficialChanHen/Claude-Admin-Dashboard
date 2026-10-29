@@ -183,6 +183,17 @@ CREATE TABLE IF NOT EXISTS tasks (
   ended_at        INTEGER
 );
 CREATE INDEX IF NOT EXISTS tasks_open ON tasks(ended_at);
+
+-- Prompts HQ handed to a task mid-task, at the time you sent them. Claude Code
+-- logs each only once it reads it; seen marks that the log has it now.
+CREATE TABLE IF NOT EXISTS joined (
+  id          TEXT PRIMARY KEY,
+  session_id  TEXT NOT NULL,
+  ts          INTEGER NOT NULL,
+  text        TEXT NOT NULL,
+  seen        INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS joined_session ON joined(session_id);
 `)
 
 // A manager or boss session HQ stopped resuming in favour of a fresh one. Its
