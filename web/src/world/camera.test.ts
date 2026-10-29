@@ -218,4 +218,33 @@ describe('Camera following someone', () => {
     expect(c.P).toBe(4)
     expect(Math.abs(c.x - x)).toBeLessThan(5)
   })
+
+  it('leaves room for a window on the right too', () => {
+    const c = cam()
+    c.P = 4
+    const at = c.centreOn(800, 500, 4, 400, 0, 300)
+    c.x = at.x
+    c.y = at.y
+    expect(c.toScreen(800, 500).x).toBe((400 + 700) / 2)
+  })
+
+  it('centres someone at the corner of the world while free, and not otherwise', () => {
+    const c = cam()
+    c.P = 4
+    c.x = 10
+    c.y = 10
+    c.clamp()
+    expect(c.toScreen(10, 10).x).not.toBe(500)
+    c.free = true
+    c.x = 10
+    c.y = 10
+    c.clamp()
+    expect(c.toScreen(10, 10)).toEqual({ x: 500, y: 300 })
+  })
+
+  it('finds the nearest centre that keeps the world on screen', () => {
+    const c = cam()
+    expect(c.inWorld(-50, 5000, 2)).toEqual({ x: 250, y: 1200 - 150 })
+    expect(c.inWorld(900, 700, 2)).toEqual({ x: 900, y: 700 })
+  })
 })

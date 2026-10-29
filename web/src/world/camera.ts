@@ -12,6 +12,8 @@ export class Camera {
   worldW = 1
   worldH = 1
   private maxP = 8
+  /** While following someone, the camera may go past the world's edges so they can sit in the middle. */
+  free = false
   /** Inside a room, the part of the world the camera keeps to. */
   bounds: { x: number; y: number; w: number; h: number } | null = null
   private target: { x: number; y: number; P?: number } | null = null
@@ -72,10 +74,13 @@ export class Camera {
    * hold the camera once a flight has landed, so the flight there stays smooth.
    */
   clamp() {
+    if (!this.free) {
+      const w = this.inWorld(this.x, this.y, this.P)
+      this.x = w.x
+      this.y = w.y
+    }
     const halfW = this.vw / 2 / this.P
     const halfH = this.vh / 2 / this.P
-    this.x = this.worldW <= halfW * 2 ? this.worldW / 2 : Math.min(this.worldW - halfW, Math.max(halfW, this.x))
-    this.y = this.worldH <= halfH * 2 ? this.worldH / 2 : Math.min(this.worldH - halfH, Math.max(halfH, this.y))
     const b = this.bounds
     if (!b || this.target) return
     const keep = (v: number, start: number, size: number, half: number) => {
@@ -85,6 +90,16 @@ export class Camera {
     }
     this.x = keep(this.x, b.x, b.w, halfW)
     this.y = keep(this.y, b.y, b.h, halfH)
+  }
+
+  /** The nearest centre to (x, y) at zoom P that keeps the world on screen. */
+  inWorld(x: number, y: number, P: number) {
+    const halfW = this.vw / 2 / P
+    const halfH = this.vh / 2 / P
+    return {
+      x: this.worldW <= halfW * 2 ? this.worldW / 2 : Math.min(this.worldW - halfW, Math.max(halfW, x)),
+      y: this.worldH <= halfH * 2 ? this.worldH / 2 : Math.min(this.worldH - halfH, Math.max(halfH, y)),
+    }
   }
 
   /** One zoom step in or out, keeping the point under the cursor still. */
@@ -109,11 +124,11 @@ export class Camera {
 
   /**
    * The centre that puts world point (x, y) in the middle of what is left of
-   * the screen at zoom P, when insetX device px on the left and insetY on top
-   * are covered.
+   * the screen at zoom P, when insetX device px on the left, insetY on top and
+   * insetRight on the right are covered.
    */
-  centreOn(x: number, y: number, P: number, insetX = 0, insetY = 0) {
-    return { x: x - insetX / 2 / P, y: y - insetY / 2 / P }
+  centreOn(x: number, y: number, P: number, insetX = 0, insetY = 0, insetRight = 0) {
+    return { x: x - (insetX - insetRight) / 2 / P, y: y - insetY / 2 / P }
   }
 
   flyTo(x: number, y: number, P?: number) {

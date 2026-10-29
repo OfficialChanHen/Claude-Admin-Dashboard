@@ -14,12 +14,11 @@ const HUD_TOP = 16
 const HUD_BOTTOM = 120
 // Art px from the pointer down to the feet of the person you carry: you hold them by the shoulders.
 const CARRY_FEET = 12
-// Following someone: the art px around them to fit on screen, how far above
-// their feet their middle is, and the CSS px the chat dock covers on the left.
+// Following someone: the art px around them to fit on screen, and how far above
+// their feet their middle is.
 const FOLLOW_W = 160
 const FOLLOW_H = 110
 const FOLLOW_MID = 8
-const DOCK_W = 452
 // Space kept above the person for the approval card over their head.
 const ASK_ROOM = 140
 
@@ -152,17 +151,29 @@ export function World({
         // Rooms hold the camera inside them; someone walking out would drag it back.
         if (start) cam.setBounds(null)
         const P = start ? Math.max(cam.P, cam.fitP(FOLLOW_W, FOLLOW_H, ASK_ROOM * dpr)) : cam.resting.P
-        const wide = canvas.clientWidth > 900
-        const left = p.selected === p.followId && wide ? DOCK_W * dpr : 0
+        // They go in the middle of what the chat dock and any open window leave
+        // uncovered. On a narrow screen those cover it all, so they are left out.
+        const view = canvas.getBoundingClientRect()
+        const wide = view.width > 900
+        const dock = p.selected === p.followId && wide ? document.querySelector('.chat-dock')?.getBoundingClientRect() : undefined
+        const win = wide ? document.querySelector('.game-window')?.getBoundingClientRect() : undefined
+        const left = dock ? Math.max(0, dock.right - view.left) * dpr : 0
+        const right = win ? Math.max(0, view.right - win.left) * dpr : 0
         const top = p.selected === p.followId ? 0 : ASK_ROOM * dpr
-        const at = cam.centreOn(s.x, s.y - FOLLOW_MID, P, left, top)
+        // Someone near the edge of the floor still goes in the middle, so the camera may leave the world.
+        cam.free = true
+        const at = cam.centreOn(s.x, s.y - FOLLOW_MID, P, left, top, right)
         cam.flyTo(at.x, at.y, start ? P : undefined)
         return
       }
       if (!following) return
       following = null
       if (inRoom) frameRoom(inRoom, true)
-      else cam.flyTo(cam.x, cam.y, Math.min(cam.P, Math.round(2 * dpr)))
+      else {
+        const P = Math.min(cam.P, Math.round(2 * dpr))
+        const at = cam.inWorld(cam.x, cam.y, P)
+        cam.flyTo(at.x, at.y, P)
+      }
     }
 
     loadSheets().then((s) => {
@@ -229,6 +240,8 @@ export function World({
         extras.weather.update(props.current.limits.fiveHour, Date.now())
         if (office) applyFollow()
         cam.step(dt)
+        // Back on the world's edges once the flight home from following someone lands.
+        if (!following && !cam.flying) cam.free = false
         if (t - lastDraw < FRAME_MS) return
         lastDraw = t
         ensureOffice()

@@ -309,8 +309,14 @@ button.hud-plate:hover { border-color: var(--accent); }
 .budget .chip.warn { background: var(--warn-bg); color: var(--warn); }
 .budget-head { font-size: 13px; margin: 4px 0 0; }
 .budget-head-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-/* Always in view while tasks wait for spare usage; building windows open over it */
+/* Always in view, even with a building window open: it steps aside to the
+   window's left, or on a narrow screen the window starts below it */
 .hud-right { position: absolute; top: 12px; right: 12px; z-index: 12; display: flex; gap: 8px; }
+.game:has(> .game-window) > .hud-right { z-index: 21; right: calc(min(460px, 100vw - 24px) + 24px); }
+@media (max-width: 900px) {
+  .game:has(> .game-window) > .hud-right { right: 12px; }
+  .game:has(> .hud-right) > .game-window { top: 64px; }
+}
 .queue-plate { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
 .queue-plate .pixel-icon { color: var(--accent-text); }
 /* Requests waiting for your OK: the plate, and the list it opens */
