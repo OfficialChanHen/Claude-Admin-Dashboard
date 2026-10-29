@@ -6,6 +6,7 @@ import { DATA_DIR, PORT } from './config.js'
 import { get, run } from './db.js'
 import { isRunning, notePid } from './stop.js'
 import { promptToolArgs } from './mcp.js'
+import { setSessionState } from './transcripts.js'
 
 // Sends a prompt to a project by starting the claude CLI there, headless.
 // It runs on your Pro plan like any other Claude Code session, and its
@@ -168,7 +169,11 @@ export function startPrompt(
     taskId, sessionId, req.projectId || null, cwd, req.permissionMode, req.model ?? null, child.pid ?? null, opts.recovered ? 1 : 0, now,
   )
   const done = track(taskId, sessionId, child.pid, req.projectId, cwd, now, opts.onExit)
-  child.on('exit', done)
+  child.on('exit', (code) => {
+    // A clean exit stays at the desk for a reply (see hooks.ts); a crash goes home.
+    if (code) setSessionState(sessionId, 'ended')
+    done()
+  })
   child.on('error', done)
   child.unref()
   return { resumed: resumeId, sessionId }
