@@ -79,7 +79,7 @@ export function ReportsPanel({ projects, refreshKey, onOpen }: { projects: Map<s
         <summary>How reports work</summary>
         <p className="note">
           A project gets a manager once two or more agents work in it at once, and the boss comes in once two or more projects
-          have agents at work. Each sums up its agents at most every {h.everyMin} minutes, only when something new happened, and can
+          have agents at work. When that drops back to one project, the boss sends a closing report first. Each sums up its agents at most every {h.everyMin} minutes, only when something new happened, and can
           prompt the agents below it. Each round is a prompt on your plan.
         </p>
       </details>

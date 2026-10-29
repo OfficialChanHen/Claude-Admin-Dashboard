@@ -11,6 +11,7 @@ import { sessionChat } from './chat.js'
 import { currentBudget } from './budget.js'
 import { MCP_SERVER, type ExtraTools } from './mcp.js'
 import { helperName, nameSessions, taskTitle } from './names.js'
+import { workSince, type Commit } from './git.js'
 
 // Managers and the boss. Reports go up the ranks:
 //   helper (subagent) -> agent (session) -> manager -> boss
@@ -67,6 +68,26 @@ export function mostlyDone(done: boolean[], share: number) {
 export const agentDone = (a: Pick<Agent, 'state' | 'lastAt'>, now: number, quietMs: number, helpersBusy = false) =>
   a.state !== 'working' && !helpersBusy && now - a.lastAt >= quietMs
 
+/**
+ * A manager is done for the boss once it isn't mid-round and has either
+ * reported since the boss last ran or has nothing newer to report. In a busy
+ * project agents move on right after each report, so waiting for a report that
+ * covers their latest work would hold the boss back forever.
+ */
+export function managerDone(m: { running: boolean; reportedAt: number; bossLastRound: number | null; latestWork: number; agentsDone: boolean }) {
+  if (m.running) return false
+  return (m.bossLastRound != null && m.reportedAt > m.bossLastRound) || (m.agentsDone && m.reportedAt >= m.latestWork)
+}
+
+/**
+ * The boss's closing round: once, when it stops being needed (only one project
+ * is busy now, so that project's manager reports straight to the user), if
+ * anything happened since its last round. It skips the wait between rounds.
+ */
+export function closingRoundDue(b: { wasNeeded: boolean; needed: boolean; running: boolean; lastRound: number | null; lastNews: number }) {
+  return b.wasNeeded && !b.needed && !b.running && b.lastRound != null && b.lastNews > b.lastRound
+}
+
 /** Sessions with a helper that hasn't given its final answer. Helpers silent for the active window count as gone. */
 function sessionsWithBusyHelpers(now: number) {
   const rows = all<{ session_id: string }>('SELECT DISTINCT session_id FROM agents WHERE done_at IS NULL AND last_at >= ?', now - ACTIVE_WINDOW_MS)
@@ -84,6 +105,28 @@ export type AgentDigest = {
   edited: string[]
   helpers: string[]
   lastReply: string | null
+  /** Done for now: stopped working and no helper still at it. */
+  finished: boolean
+  /** Commits since the last report that touched its files, and its files git still shows as changed. */
+  committed: { subject: string; pushed: boolean }[]
+  uncommitted: string[]
+}
+
+/**
+ * Which commits and uncommitted files belong to which agent, by the files it
+ * edited. A file a finished agent and a working one both edited stays with the
+ * working one, so committing the finished task doesn't ship half-done work.
+ */
+export function commitStates(agents: { id: string; edited: string[]; finished: boolean }[], work: { uncommitted: string[]; commits: Commit[] }) {
+  const open = new Set(work.uncommitted)
+  const busy = new Set(agents.filter((a) => !a.finished).flatMap((a) => a.edited))
+  return new Map(agents.map((a) => {
+    const mine = new Set(a.edited)
+    return [a.id, {
+      committed: work.commits.filter((c) => c.files.some((f) => mine.has(f))).map((c) => ({ subject: c.subject, pushed: c.pushed })),
+      uncommitted: a.edited.filter((f) => open.has(f) && (!a.finished || !busy.has(f))),
+    }]
+  }))
 }
 
 const cut = (s: string, n: number) => {
@@ -111,6 +154,8 @@ export function formatDigest(ds: AgentDigest[], now: number) {
     if (d.asked.length) out.push(`  Asked: ${d.asked.map((a) => `"${a}"`).join('; ')}`)
     out.push(`  Did: ${d.steps} steps${d.failed ? `, ${d.failed} failed` : ''}${d.edited.length ? `; edited ${d.edited.slice(0, 12).join(', ')}` : ''}`)
     if (d.helpers.length) out.push(`  Its helpers: ${d.helpers.join('; ')}`)
+    if (d.committed.length) out.push(`  Committed: ${d.committed.map((c) => `"${c.subject}" (${c.pushed ? 'pushed' : 'not pushed yet'})`).join('; ')}`)
+    if (d.uncommitted.length) out.push(`  Not committed yet, ${d.finished ? 'ready to commit' : 'still being finished'}: ${d.uncommitted.slice(0, 12).join(', ')}`)
     if (d.lastReply) out.push(`  Last reply: ${d.lastReply}`)
   }
   const shared = sharedFiles(ds)
@@ -141,16 +186,20 @@ export function managerPrompt(project: string, digest: string, hasBoss: boolean,
     `2. Only if an agent needs to act, send it one short, specific instruction with prompt_agent, using its session id from above. At most ${HIERARCHY.promptsPerRound} this round. An agent that is still working can't be prompted. Don't change code yourself; you may read files to check.`,
     `3. Finish by calling report once with your summary for ${up}. ${READABLE}`,
     `   - Start with one plain sentence on how the project stands.`,
-    `   - Then one bullet per agent: its name in bold, then what it did or is doing, in words someone who hasn't read the code would follow.`,
+    `   - Then one bullet per agent: its name in bold, then what it did or is doing, in words someone who hasn't read the code would follow, and what it already committed and whether that is pushed.`,
+    `   - Then, only if there are any: a bullet starting **Ready to commit:** naming the finished tasks whose work can be committed and pushed now, one starting **Still being finished:** naming the tasks to commit later, once they are done.`,
     `   - Then, only if there are any: a bullet starting **Needs you:** for anything ${up} must do, and one starting **Watch:** for problems and what you told whom.`,
-    '   - Under 12 lines.',
+    '   - Under 15 lines.',
   ].join('\n')
 }
 
-export function bossPrompt(sections: string, previous?: string) {
+export function bossPrompt(sections: string, previous?: string, closing = false) {
   return [
     'You are the boss in Claude HQ. Each busy project has a manager who reports to you; in a project with one agent, that agent reports to you directly.',
     '',
+    ...(closing
+      ? ['This is your closing round: only one project is busy now, so its manager reports straight to the user after this. Wrap up what each project finished since your last report.', '']
+      : []),
     ...earlier(previous),
     'What came in since your last report:',
     '',
@@ -160,9 +209,10 @@ export function bossPrompt(sections: string, previous?: string) {
     `2. Only if something needs to happen, send one short, specific instruction with prompt_manager (to a project's manager) or prompt_agent (to an agent in a project with no manager). At most ${HIERARCHY.promptsPerRound} this round. Don't change code yourself; you may read files to check.`,
     `3. Finish by calling report once with your summary for the user. ${READABLE}`,
     '   - Start with one plain sentence on how things stand overall.',
-    '   - Then one bullet per project: its name in bold, then what its agents did or are doing, each agent by its name.',
+    '   - Then one bullet per project: its name in bold, then what its agents did or are doing, each agent by its name, and what each already committed and whether that is pushed.',
+    '   - Then, only if there are any: a bullet starting **Ready to commit:** naming the finished tasks, by project, whose work can be committed and pushed now, and one starting **Still being finished:** naming the tasks to commit later, once they are done.',
     '   - Then, only if there are any: a bullet starting **Needs you:** for anything the user must do, and one starting **Watch:** for problems across projects and what you told whom.',
-    '   - Under 15 lines.',
+    '   - Under 18 lines.',
   ].join('\n')
 }
 
@@ -177,14 +227,15 @@ const COLS = 'session_id, role, project_id, started_at, last_round, retired_at'
 const roleRows = () => all<RoleRow>(`SELECT ${COLS} FROM roles WHERE retired_at IS NULL`)
 export const roleOf = (sid: string) => get<RoleRow>(`SELECT ${COLS} FROM roles WHERE session_id = ?`, sid)
 
-function agentsNow(now: number) {
+/** Agents at work now, or since `since` (the closing round looks back to the boss's last round). */
+function agentsNow(now: number, since = now - ACTIVE_WINDOW_MS) {
   const ids = new Set(all<{ session_id: string }>('SELECT session_id FROM roles').map((r) => r.session_id))
-  return (activeSessions(now - ACTIVE_WINDOW_MS) as Agent[]).filter((a) => !ids.has(a.id))
+  return (activeSessions(since) as Agent[]).filter((a) => !ids.has(a.id))
 }
 
 const bossNeeded = (now: number) => whoIsNeeded(agentsNow(now), new Set()).boss
 
-function digestFor(a: Agent, since: number): AgentDigest {
+function digestFor(a: Agent, since: number, finished: boolean): AgentDigest {
   const asked = all<{ text: string }>('SELECT text FROM prompts WHERE session_id = ? AND ts > ? ORDER BY ts DESC LIMIT 3', a.id, since)
     .map((p) => cut(p.text, 200))
     .reverse()
@@ -204,7 +255,24 @@ function digestFor(a: Agent, since: number): AgentDigest {
     edited,
     helpers,
     lastReply: reply && 'text' in reply ? cut(reply.text, 500) : null,
+    finished,
+    committed: [],
+    uncommitted: [],
   }
+}
+
+/** Every file a session has edited, so work left uncommitted from before the last report still counts. */
+const touched = (sid: string) =>
+  all<{ summary: string }>(`SELECT DISTINCT summary FROM actions WHERE session_id = ? AND tool IN ('Edit', 'Write', 'MultiEdit', 'NotebookEdit') AND summary IS NOT NULL`, sid).map((r) => r.summary)
+
+/** Digests for a project's agents, with what git says they committed and left uncommitted. */
+async function projectDigests(dir: string | null, agents: Agent[], since: number, now: number) {
+  const busy = sessionsWithBusyHelpers(now)
+  const ds = agents.map((a) => digestFor(a, since, agentDone(a, now, HIERARCHY.quietMs, busy.has(a.id))))
+  const work = dir ? await workSince(dir, since) : null
+  if (!work) return ds
+  const states = commitStates(ds.map((d) => ({ id: d.id, edited: touched(d.id), finished: d.finished })), work)
+  return ds.map((d) => ({ ...d, ...states.get(d.id)! }))
 }
 
 function saveReport(sid: string, text: string, now = Date.now()) {
@@ -280,18 +348,35 @@ function bossDir() {
   return dir
 }
 
+/** Rounds reading git before they start, by project id or 'boss', so the next check doesn't start them twice. */
+const starting = new Set<string>()
+
+/** Runs `go` unless that role's round is already starting; failures are logged, not thrown. */
+function begin(key: string, go: () => Promise<void>) {
+  if (starting.has(key)) return
+  starting.add(key)
+  go().catch((err) => console.error('[HQ] managers:', err)).finally(() => starting.delete(key))
+}
+
 function managerRound(projectId: string, agents: Agent[], row: RoleRow | undefined, now: number, from?: string) {
   const project = listProjects().find((p) => p.id === projectId)
   if (!project || !fs.existsSync(project.path)) return
   const since = row?.last_round ?? now - 3 * ACTIVE_WINDOW_MS
-  const digest = formatDigest(agents.map((a) => digestFor(a, since)), now)
-  const { existing, previous } = nextSession(row, now)
-  startRound('manager', projectId, project.path, managerPrompt(project.name, digest, bossNeeded(now), from, previous), existing, now)
+  begin(projectId, async () => {
+    const digest = formatDigest(await projectDigests(project.path, agents, since, now), now)
+    const { existing, previous } = nextSession(row, now)
+    startRound('manager', projectId, project.path, managerPrompt(project.name, digest, bossNeeded(now), from, previous), existing, now)
+  })
 }
 
-function bossRound(agents: Agent[], managed: Set<string>, row: RoleRow | undefined, now: number) {
+function bossRound(agents: Agent[], managed: Set<string>, row: RoleRow | undefined, now: number, closing = false) {
+  begin('boss', () => bossRoundNow(agents, managed, row, now, closing))
+}
+
+async function bossRoundNow(agents: Agent[], managed: Set<string>, row: RoleRow | undefined, now: number, closing: boolean) {
   const since = row?.last_round ?? now - 3 * ACTIVE_WINDOW_MS
-  const names = new Map(listProjects().map((p) => [p.id, p.name]))
+  const projects = listProjects()
+  const names = new Map(projects.map((p) => [p.id, p.name]))
   const parts: string[] = []
   const reports = all<{ project_id: string; text: string }>(
     `SELECT project_id, text FROM reports WHERE role = 'manager' AND ts > ? AND ts = (SELECT MAX(ts) FROM reports r2 WHERE r2.project_id = reports.project_id AND r2.role = 'manager')`,
@@ -300,9 +385,13 @@ function bossRound(agents: Agent[], managed: Set<string>, row: RoleRow | undefin
   for (const r of reports) parts.push(`Report from the manager of "${names.get(r.project_id) ?? r.project_id}" (project id ${r.project_id}):\n${r.text}`)
   const byProject = new Map<string, Agent[]>()
   for (const a of agents) if (a.projectId && !managed.has(a.projectId)) byProject.set(a.projectId, [...(byProject.get(a.projectId) ?? []), a])
-  for (const [pid, list] of byProject) parts.push(`Project "${names.get(pid) ?? pid}" has no manager; its agent:\n${formatDigest(list.map((a) => digestFor(a, since)), now)}`)
+  for (const [pid, list] of byProject) {
+    const dir = projects.find((p) => p.id === pid)?.path ?? null
+    const ds = await projectDigests(dir && fs.existsSync(dir) ? dir : null, list, since, now)
+    parts.push(`Project "${names.get(pid) ?? pid}" has no manager; its agent:\n${formatDigest(ds, now)}`)
+  }
   const { existing, previous } = nextSession(row, now)
-  startRound('boss', null, bossDir(), bossPrompt(parts.join('\n\n'), previous), existing, now)
+  startRound('boss', null, bossDir(), bossPrompt(parts.join('\n\n'), previous, closing), existing, now)
 }
 
 /** Checks the ranks and starts any round that is due. Runs every 30 seconds. */
@@ -330,19 +419,38 @@ export function hierarchyTick(now = Date.now()) {
     const lastReport = get<{ ts: number | null }>(`SELECT MAX(ts) ts FROM reports WHERE role = 'manager'`)?.ts ?? 0
     const unmanaged = agents.filter((a) => a.projectId && !managed.has(a.projectId))
     const news = Math.max(lastReport, ...unmanaged.map((a) => a.lastAt))
-    // A manager is done once its agents are and it has reported on their latest work.
-    const managerDone = (pid: string) => {
+    const managerIsDone = (pid: string) => {
       const mine = agents.filter((a) => a.projectId === pid)
-      const m = roles.find((r) => r.role === 'manager' && r.project_id === pid)
-      const reported = get<{ ts: number | null }>(`SELECT MAX(ts) ts FROM reports WHERE role = 'manager' AND project_id = ?`, pid)?.ts ?? 0
-      return mostlyDone(mine.map(done), HIERARCHY.doneShare) && !running(m) && reported >= Math.max(...mine.map((a) => a.lastAt))
+      return managerDone({
+        running: running(roles.find((r) => r.role === 'manager' && r.project_id === pid)),
+        reportedAt: get<{ ts: number | null }>(`SELECT MAX(ts) ts FROM reports WHERE role = 'manager' AND project_id = ?`, pid)?.ts ?? 0,
+        bossLastRound: row?.last_round ?? null,
+        latestWork: Math.max(...mine.map((a) => a.lastAt)),
+        agentsDone: mostlyDone(mine.map(done), HIERARCHY.doneShare),
+      })
     }
-    const below = [...need.managers.map(managerDone), ...unmanaged.map(done)]
+    const below = [...need.managers.map(managerIsDone), ...unmanaged.map(done)]
     // On the first round, wait for the managers there are to report first.
     const waitingOnManagers = !row && need.managers.some((pid) => !all('SELECT 1 FROM reports WHERE role = ? AND project_id = ? LIMIT 1', 'manager', pid).length)
     if (!waitingOnManagers && due('boss', row, news, mostlyDone(below, HIERARCHY.doneShare))) bossRound(agents, managed, row, now)
+  } else {
+    const row = roles.find((r) => r.role === 'boss')
+    if (row?.last_round != null) {
+      // Look back to the boss's last round, so the project that just went quiet is still in it.
+      const since = row.last_round
+      const recent = agentsNow(now, since)
+      const reported = all<{ project_id: string; ts: number }>(`SELECT project_id, ts FROM reports WHERE role = 'manager' AND ts > ?`, since)
+      const lastNews = Math.max(0, ...reported.map((r) => r.ts), ...recent.map((a) => a.lastAt))
+      if (closingRoundDue({ wasNeeded: bossWasNeeded, needed: false, running: running(row), lastRound: since, lastNews })) {
+        bossRound(recent, new Set([...need.managers, ...reported.map((r) => r.project_id)]), row, now, true)
+      }
+    }
   }
+  bossWasNeeded = need.boss
 }
+
+/** Whether the boss was needed at the last check, so it gets a closing round when that changes. */
+let bossWasNeeded = false
 
 /** When each manager (by project id) or the boss was first needed, so a first round that waits on busy agents still runs in time. */
 const firstNeeded = new Map<string, number>()

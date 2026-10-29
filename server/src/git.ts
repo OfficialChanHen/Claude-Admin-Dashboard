@@ -73,6 +73,40 @@ export function reflogKind(entry: string): 'commit' | 'push' | 'other' {
   return 'other'
 }
 
+/** Reads `git status --porcelain -z`: the files with uncommitted changes, new ones included. A rename is listed by its new name. */
+export function parseUncommitted(out: string) {
+  const files: string[] = []
+  const parts = out.split('\0')
+  for (let i = 0; i < parts.length; i++) {
+    const e = parts[i]
+    if (e.length < 4) continue
+    files.push(e.slice(3))
+    // A rename or copy is followed by its old name.
+    if (/[RC]/.test(e.slice(0, 2))) i++
+  }
+  return files
+}
+
+export type Commit = { subject: string; files: string[]; pushed: boolean }
+
+/** Reads `git log --format=%x1e%H%x00%s --name-only`; `unpushed` holds the hashes on no remote. */
+export function parseLog(out: string, unpushed: Set<string>): Commit[] {
+  return out.split('\x1e').filter((c) => c.trim()).map((c) => {
+    const [first, ...rest] = c.split('\n')
+    const [hash, subject] = first.split('\0')
+    return { subject: subject ?? '', files: rest.filter(Boolean), pushed: !unpushed.has(hash) }
+  })
+}
+
+/** What is uncommitted in a repo now, and the commits made since `since`, for the managers' and boss's reports. */
+export async function workSince(dir: string, since: number): Promise<{ uncommitted: string[]; commits: Commit[] } | null> {
+  const status = await git(dir, ['status', '--porcelain', '-z', '--untracked-files=all'])
+  if (status == null) return null
+  const log = (await git(dir, ['log', `--since=${new Date(since).toISOString()}`, '--format=%x1e%H%x00%s', '--name-only', 'HEAD'])) ?? ''
+  const unpushed = new Set(((await git(dir, ['rev-list', 'HEAD', '--not', '--remotes'])) ?? '').split('\n').filter(Boolean))
+  return { uncommitted: parseUncommitted(status), commits: parseLog(log, unpushed) }
+}
+
 type Snapshot = { head: string | null; upstreamTip: string | null }
 
 /**

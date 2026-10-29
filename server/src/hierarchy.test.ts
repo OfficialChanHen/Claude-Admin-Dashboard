@@ -10,7 +10,7 @@ vi.mock('./chat.js', () => ({ sessionChat: vi.fn(() => []) }))
 vi.mock('./budget.js', () => ({ currentBudget: vi.fn(() => ({ phase: 'ok' })) }))
 vi.mock('./config.js', () => ({ ACTIVE_WINDOW_MS: 600_000, DATA_DIR: '/tmp/hq-test', HIERARCHY: { on: true, everyMs: 600_000, promptsPerRound: 2 } }))
 
-import { agentDone, bossPrompt, formatDigest, managerPrompt, mostlyDone, roundDue, sharedFiles, whoIsNeeded, type AgentDigest } from './hierarchy.js'
+import { agentDone, bossPrompt, closingRoundDue, commitStates, managerDone, formatDigest, managerPrompt, mostlyDone, roundDue, sharedFiles, whoIsNeeded, type AgentDigest } from './hierarchy.js'
 
 const a = (id: string, projectId: string | null) => ({ id, projectId })
 
@@ -76,8 +76,49 @@ describe('agentDone', () => {
   })
 })
 
+describe('managerDone', () => {
+  const m = { running: false, reportedAt: 0, bossLastRound: null as number | null, latestWork: 0, agentsDone: false }
+
+  it('is done once it reported since the boss last ran, even while its agents carry on', () => {
+    // A busy project: an agent moved again seconds after the manager's report.
+    expect(managerDone({ ...m, reportedAt: 1_000, bossLastRound: 500, latestWork: 1_006 })).toBe(true)
+  })
+
+  it('is not done before it has reported on work since the boss last ran', () => {
+    expect(managerDone({ ...m, reportedAt: 400, bossLastRound: 500, latestWork: 1_006 })).toBe(false)
+  })
+
+  it('is done when its agents are done and it reported on their latest work', () => {
+    expect(managerDone({ ...m, reportedAt: 1_000, bossLastRound: 2_000, latestWork: 900, agentsDone: true })).toBe(true)
+  })
+
+  it('is not done while it is in the middle of a round', () => {
+    expect(managerDone({ ...m, running: true, reportedAt: 1_000, bossLastRound: 500, latestWork: 900, agentsDone: true })).toBe(false)
+  })
+})
+
+describe('closingRoundDue', () => {
+  const c = { wasNeeded: true, needed: false, running: false, lastRound: 1_000 as number | null, lastNews: 2_000 }
+
+  it('runs once when the boss stops being needed and something happened since its last round', () => {
+    expect(closingRoundDue(c)).toBe(true)
+  })
+
+  it('does not run while the boss is still needed or was not needed before', () => {
+    expect(closingRoundDue({ ...c, needed: true })).toBe(false)
+    expect(closingRoundDue({ ...c, wasNeeded: false })).toBe(false)
+  })
+
+  it('does not run with nothing new, mid-round, or before the boss ever ran', () => {
+    expect(closingRoundDue({ ...c, lastNews: 900 })).toBe(false)
+    expect(closingRoundDue({ ...c, running: true })).toBe(false)
+    expect(closingRoundDue({ ...c, lastRound: null })).toBe(false)
+  })
+})
+
 const d = (over: Partial<AgentDigest>): AgentDigest => ({
-  id: 's1', title: 'Fix the camera', state: 'idle', lastAt: 0, asked: [], steps: 0, failed: 0, edited: [], helpers: [], lastReply: null, ...over,
+  id: 's1', title: 'Fix the camera', state: 'idle', lastAt: 0, asked: [], steps: 0, failed: 0, edited: [], helpers: [], lastReply: null,
+  finished: true, committed: [], uncommitted: [], ...over,
 })
 
 describe('formatDigest', () => {
@@ -94,6 +135,37 @@ describe('formatDigest', () => {
     const ds = [d({ id: 's1', title: 'A', edited: ['styles.css', 'a.ts'] }), d({ id: 's2', title: 'B', edited: ['styles.css'] })]
     expect(sharedFiles(ds)).toEqual([['styles.css', ['A', 'B']]])
     expect(formatDigest(ds, 0)).toContain('Files edited by more than one agent: styles.css (A, B)')
+  })
+})
+
+describe('commitStates', () => {
+  const work = {
+    uncommitted: ['a.ts', 'shared.ts', 'mine-not.ts'],
+    commits: [
+      { subject: 'Fix the camera', files: ['cam.ts'], pushed: true },
+      { subject: 'Tidy the hub', files: ['hub.ts', 'cam.ts'], pushed: false },
+    ],
+  }
+
+  it('gives each agent the commits that touched its files and its files still uncommitted', () => {
+    const s = commitStates([{ id: '1', edited: ['cam.ts', 'a.ts'], finished: true }], work)
+    expect(s.get('1')).toEqual({
+      committed: [{ subject: 'Fix the camera', pushed: true }, { subject: 'Tidy the hub', pushed: false }],
+      uncommitted: ['a.ts'],
+    })
+  })
+
+  it('leaves a file both a finished and a working agent edited with the one still working', () => {
+    const s = commitStates([
+      { id: 'done', edited: ['a.ts', 'shared.ts'], finished: true },
+      { id: 'busy', edited: ['shared.ts'], finished: false },
+    ], work)
+    expect(s.get('done')!.uncommitted).toEqual(['a.ts'])
+    expect(s.get('busy')!.uncommitted).toEqual(['shared.ts'])
+  })
+
+  it('has nothing for an agent whose files git does not show', () => {
+    expect(commitStates([{ id: '1', edited: ['other.ts'], finished: true }], work).get('1')).toEqual({ committed: [], uncommitted: [] })
   })
 })
 
@@ -128,5 +200,38 @@ describe('prompts', () => {
     expect(bossPrompt('news', 'Two projects busy.')).toContain('\nTwo projects busy.\n')
     expect(managerPrompt('HQ', 'digest', false)).not.toContain('fresh session')
     expect(bossPrompt('news')).not.toContain('fresh session')
+  })
+
+  it('tells the boss when a round is its closing one', () => {
+    expect(bossPrompt('news', undefined, true)).toContain('closing round')
+    expect(bossPrompt('news')).not.toContain('closing round')
+  })
+})
+
+describe('formatDigest commit state', () => {
+  it('says what each agent committed and whether the rest is ready to commit or still being finished', () => {
+    const out = formatDigest([
+      d({ title: 'Fix the camera', committed: [{ subject: 'Camera follows clicks', pushed: true }, { subject: 'Camera zoom', pushed: false }], uncommitted: ['cam.ts'] }),
+      d({ id: 's2', title: 'Tidy the hub', state: 'working', finished: false, uncommitted: ['hub.ts'] }),
+    ], 0)
+    expect(out).toContain('  Committed: "Camera follows clicks" (pushed); "Camera zoom" (not pushed yet)')
+    expect(out).toContain('  Not committed yet, ready to commit: cam.ts')
+    expect(out).toContain('  Not committed yet, still being finished: hub.ts')
+  })
+
+  it('leaves the lines out when there is nothing to say', () => {
+    const out = formatDigest([d({})], 0)
+    expect(out).not.toContain('Committed:')
+    expect(out).not.toContain('Not committed yet')
+  })
+})
+
+describe('prompts commit state', () => {
+  it('asks managers and the boss to say what is committed, ready to commit and still being finished', () => {
+    for (const p of [managerPrompt('HQ', '', false), bossPrompt('')]) {
+      expect(p).toContain('**Ready to commit:**')
+      expect(p).toContain('**Still being finished:**')
+      expect(p).toContain('committed')
+    }
   })
 })

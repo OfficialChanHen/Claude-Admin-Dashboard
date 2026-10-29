@@ -4,7 +4,7 @@ vi.mock('./db.js', () => ({ all: vi.fn(() => []) }))
 vi.mock('./bus.js', () => ({ bus: { publish: vi.fn() } }))
 vi.mock('./projects.js', () => ({ listProjects: vi.fn(() => []) }))
 
-const { changesBetween, parseShortstat, parseStatus, reflogKind } = await import('./git.js')
+const { changesBetween, parseLog, parseShortstat, parseStatus, parseUncommitted, reflogKind } = await import('./git.js')
 
 describe('parseStatus', () => {
   it('reads the commit, branch, upstream, ahead count and changed files', () => {
@@ -73,5 +73,30 @@ describe('changesBetween', () => {
   it('sees a commit and a push made between two looks', () => {
     const r = changesBetween('p', at('a', 'a'), at('b', 'b'), 'commit: x', 'update by push', 'x')
     expect(r.map((c) => c.change)).toEqual(['commit', 'push'])
+  })
+})
+
+describe('parseUncommitted', () => {
+  it('lists changed and new files, and the new name of a renamed one', () => {
+    const out = [' M web/src/App.tsx', '?? server/src/new.ts', 'R  server/src/b.ts', 'server/src/a.ts', ''].join('\0')
+    expect(parseUncommitted(out)).toEqual(['web/src/App.tsx', 'server/src/new.ts', 'server/src/b.ts'])
+  })
+
+  it('is empty for a clean tree', () => {
+    expect(parseUncommitted('')).toEqual([])
+  })
+})
+
+describe('parseLog', () => {
+  it('reads each commit with its subject and files, and whether it is pushed', () => {
+    const out = '\x1eaaa\0Fix the camera\n\nweb/src/App.tsx\nweb/src/world/camera.ts\n\x1ebbb\0Add reports\n\nserver/src/hierarchy.ts\n'
+    expect(parseLog(out, new Set(['aaa']))).toEqual([
+      { subject: 'Fix the camera', files: ['web/src/App.tsx', 'web/src/world/camera.ts'], pushed: false },
+      { subject: 'Add reports', files: ['server/src/hierarchy.ts'], pushed: true },
+    ])
+  })
+
+  it('is empty with no commits', () => {
+    expect(parseLog('', new Set())).toEqual([])
   })
 })
