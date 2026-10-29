@@ -273,8 +273,10 @@ button.hud-plate:hover { border-color: var(--accent); }
 }
 .prompt-empty { text-align: center; color: var(--text-2); font-size: 13px; width: auto; padding: 8px 16px; }
 /* Laid out like the Claude Code extension's input: text on top, a footer of options inside the box */
-.prompt-box { gap: 0; padding: 0; border-radius: 8px; border-width: 1px; background: var(--panel); }
-.prompt-box:focus-within { border-color: var(--accent); }
+.prompt-box { gap: 0; padding: 0; background: var(--panel); color: var(--text); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: var(--pixel-shadow); }
+/* Lit while you are typing or picking an option, like the extension's focused input */
+.prompt-box { transition: border-color 0.12s, box-shadow 0.12s; }
+.prompt-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
 .prompt-input {
   display: block;
   width: 100%;
@@ -292,8 +294,9 @@ button.hud-plate:hover { border-color: var(--accent); }
 }
 .prompt-input:focus { outline: none; }
 .prompt-input::placeholder { color: var(--text-3); }
-.prompt-foot { display: flex; align-items: center; gap: 2px; padding: 4px 6px 6px; min-width: 0; flex-wrap: wrap; }
-.picker { position: relative; flex: none; }
+.prompt-foot { display: flex; align-items: center; gap: 2px; padding: 4px 6px 6px; min-width: 0; }
+.prompt-foot > * { height: 24px; }
+.picker { position: relative; flex: none; display: flex; }
 .picker-btn {
   display: inline-flex;
   align-items: center;
@@ -302,7 +305,9 @@ button.hud-plate:hover { border-color: var(--accent); }
   background: none;
   color: var(--text-2);
   font-size: 12px;
-  padding: 3px 7px;
+  line-height: 1;
+  height: 24px;
+  padding: 0 7px;
   border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
@@ -343,28 +348,29 @@ button.hud-plate:hover { border-color: var(--accent); }
 .picker-desc { font-size: 11px; color: var(--text-3); }
 /* Who the prompt goes to, shown like the extension's file-in-context chip beside Send */
 .prompt-ctx {
+  /* Takes the room left after the options, shortening its name rather than pushing Send to a new line */
   margin-left: auto;
+  flex: 0 1 auto;
   display: inline-flex;
   align-items: center;
   gap: 5px;
   min-width: 0;
-  max-width: 55%;
   font-size: 12px;
+  line-height: 1;
   color: var(--text-2);
-  padding: 2px 2px 2px 7px;
+  padding: 0 2px 0 7px;
   border: 1px solid var(--line);
   border-radius: 4px;
 }
 .prompt-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .prompt-sub { font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 10 auto; }
-.prompt-ctx-x { flex: none; display: grid; place-items: center; border: 0; background: none; color: var(--text-3); padding: 3px; border-radius: 3px; cursor: pointer; }
+.prompt-ctx-x { flex: none; display: grid; place-items: center; width: 18px; height: 18px; border: 0; background: none; color: var(--text-3); padding: 0; border-radius: 3px; cursor: pointer; }
 .prompt-ctx-x:hover { background: var(--panel-3); color: var(--text); }
 .prompt-send {
   flex: none;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
   margin-left: 6px;
   border: 0;
   border-radius: 6px;
@@ -480,7 +486,8 @@ button.hud-plate:hover { border-color: var(--accent); }
 .budget-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .budget-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
-/* The conversation with its prompt box under it, one column on the left */
+/* The conversation with its prompt box under it: one panel on the left, the box
+   set into its foot like the Claude Code extension's input */
 .chat-dock {
   position: absolute;
   top: 12px;
@@ -489,13 +496,17 @@ button.hud-plate:hover { border-color: var(--accent); }
   width: var(--chat-w, min(440px, calc(100vw - 24px)));
   display: flex;
   flex-direction: column;
-  gap: 8px;
   z-index: 15;
-  pointer-events: none;
+  background: var(--panel);
+  border: 2px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: var(--pixel-shadow), 0 12px 40px rgba(0, 0, 0, 0.3);
 }
-.chat-dock > * { pointer-events: auto; }
-.chat-dock .chat-panel { position: relative; flex: 1; min-height: 0; width: auto; }
-.chat-dock .prompt-bar { position: static; transform: none; width: auto; flex: none; }
+/* No layer of its own (a flex item's z-index counts even unpositioned), so the prompt box's menus open over it */
+.chat-dock .chat-panel { position: static; z-index: auto; flex: 1; min-height: 0; width: auto; background: none; border: 0; border-radius: 0; box-shadow: none; }
+.chat-dock .chat-resize { right: -8px; }
+/* Above the conversation, so its menus open over it */
+.chat-dock .prompt-bar { position: relative; inset: auto; transform: none; width: auto; flex: none; z-index: 2; margin: 0 10px 10px; box-shadow: none; }
 
 /* A conversation with one session, on the left so building windows can open beside it */
 .chat-panel {
@@ -569,13 +580,13 @@ button.hud-plate:hover { border-color: var(--accent); }
 .md-table th, .md-table td { border: 1px solid var(--line-strong); padding: 3px 6px; text-align: left; vertical-align: top; }
 .md-table th { background: var(--panel-3); }
 /* Tool steps: a dot for how it went, the tool's name, then what it was given, joined by a line */
-.chat-steps { display: grid; gap: 0; margin-left: 46px; position: relative; }
-.chat-steps::before { content: ''; position: absolute; left: 3px; top: 8px; bottom: 8px; width: 1px; background: var(--line-strong); }
+.chat-steps { display: grid; gap: 0; margin-left: 48px; position: relative; }
+.chat-steps::before { content: ''; position: absolute; left: 3px; top: 11px; bottom: 11px; width: 1px; background: var(--line-strong); }
 .chat-step { position: relative; display: flex; align-items: baseline; gap: 6px; font-size: 12px; line-height: 1.5; padding: 2px 0 2px 16px; color: var(--text-2); min-width: 0; }
 .chat-step b { color: var(--text); font-weight: 600; flex: none; }
 .step-arg { font: 12px/1.5 var(--mono); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .step-bad { color: var(--bad); flex: none; margin-left: auto; }
-.tl-dot { position: absolute; left: 0; top: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
+.tl-dot { position: absolute; left: 0; top: 7.5px; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
 .chat-step.ok .tl-dot { background: var(--ok); }
 .chat-step.bad .tl-dot { background: var(--bad); }
 .chat-step.run .tl-dot { background: var(--claude); animation: blink 1s steps(2, jump-none) infinite; }
@@ -583,7 +594,7 @@ button.hud-plate:hover { border-color: var(--accent); }
 .chat-more { position: relative; justify-self: start; display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 2px 0 2px 16px; font-size: 12px; color: var(--text-3); cursor: pointer; }
 .chat-more:hover { color: var(--text); }
 .chat-more[aria-expanded='true'] .pixel-icon { transform: rotate(180deg); }
-.chat-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); padding: 2px 0 2px 46px; }
+.chat-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); padding: 2px 0 2px 48px; }
 .chat-status.think, .chat-status.work { color: var(--claude); }
 .chat-status.turn { color: var(--turn); font-weight: 600; }
 .spark { display: inline-grid; animation: spin 2.4s steps(8) infinite; }
