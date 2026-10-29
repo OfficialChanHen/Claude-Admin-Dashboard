@@ -40,15 +40,19 @@ open when you click one.
 
 The prompt box starts `claude -p` in the project's folder. "New task" starts a
 fresh session; "Continue last" resumes the project's latest session that is not
-busy. "Can edit" lets it edit files without asking; "Plan only" makes it plan
-and change nothing. There is no option to skip permissions. Startup errors go to
+busy. "Auto" runs it in Claude Code's auto mode: a safety check lets routine
+steps (edits, builds, tests) run without asking and blocks risky ones, such as
+deleting files outside the project, force-pushing or sending data out. A step it
+keeps blocking, or can't judge, is asked in HQ, and so are Claude's questions.
+"Plan only" makes it plan and change nothing. There is no option to skip
+permissions. Startup errors go to
 `data/prompts.log`.
 
 To chat about something that isn't any project, click Other folders. The
 prompt box there starts a chat in its own folder, `~/.claude-hq/chat` (or
 `HQ_CHAT_DIR`), outside this repo and every project, so it reads none of their
 files. "New chat" starts one; "Continue last" carries on the latest. A chat
-can't edit files without asking: anything beyond reading is asked in HQ. The
+runs in auto mode too. The
 person who sits down in Other folders is your chat; click them to read it.
 
 Claude Code doesn't title sessions started this way, so HQ names each one after

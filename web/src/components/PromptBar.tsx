@@ -4,7 +4,7 @@ import { rememberModel, startingModel } from '../lib/promptModel'
 import { PixelIcon } from './PixelIcon'
 import { zoneColor } from './ProjectsPanel'
 
-export type SendOptions = { mode: 'new' | 'continue'; permissionMode: 'acceptEdits' | 'plan'; when: 'now' | 'spare'; model?: Model }
+export type SendOptions = { mode: 'new' | 'continue'; permissionMode: 'auto' | 'plan'; when: 'now' | 'spare'; model?: Model }
 
 // Default leaves the model to your usual Claude Code setting.
 const MODELS = [['default', 'Default'], ['fable', 'Fable'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']] as const
@@ -51,7 +51,7 @@ export function PromptBar({
 }) {
   const [text, setText] = useState('')
   const [mode, setMode] = useState<SendOptions['mode']>(() => stored('hq.prompt.mode', ['new', 'continue'] as const, 'new'))
-  const [perm, setPerm] = useState<SendOptions['permissionMode']>(() => stored('hq.prompt.perm', ['acceptEdits', 'plan'] as const, 'acceptEdits'))
+  const [perm, setPerm] = useState<SendOptions['permissionMode']>(() => stored('hq.prompt.perm', ['auto', 'plan'] as const, 'auto'))
   const remembered = () => stored('hq.prompt.model', MODELS.map(([k]) => k), 'default')
   const [model, setModel] = useState<(typeof MODELS)[number][0]>(() => startingModel(!!target, remembered()))
   // Spare usage waits for the last half hour before a reset, as a new task.
@@ -150,9 +150,9 @@ export function PromptBar({
             ))}
           </div>
         )}
-        {/* A chat has no project to edit: anything beyond reading asks you in HQ. */}
+        {/* Auto runs routine steps without asking; only risky ones and questions come to you. */}
         {!chat && <div className="seg" role="group" aria-label="What it may do">
-          {([['acceptEdits', 'Can edit'], ['plan', 'Plan only']] as const).map(([k, l]) => (
+          {([['auto', 'Auto'], ['plan', 'Plan only']] as const).map(([k, l]) => (
             <button
               type="button"
               key={k}

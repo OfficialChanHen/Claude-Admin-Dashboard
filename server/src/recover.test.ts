@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 // The recovery module reads the database and starts prompts; tests use stand-ins.
 vi.mock('./db.js', () => ({ all: vi.fn(() => []), get: vi.fn(), run: vi.fn(() => ({ changes: 0 })) }))
-vi.mock('./prompt.js', () => ({ adoptTask: vi.fn(), startPrompt: vi.fn(), PERMISSION_MODES: ['acceptEdits', 'default', 'plan'], MODELS: ['fable', 'opus', 'sonnet', 'haiku'] }))
+vi.mock('./prompt.js', () => ({ adoptTask: vi.fn(), startPrompt: vi.fn(), PERMISSION_MODES: ['auto', 'acceptEdits', 'default', 'plan'], MODELS: ['fable', 'opus', 'sonnet', 'haiku'] }))
 vi.mock('./stop.js', () => ({ isRunning: vi.fn(() => false) }))
 vi.mock('./budget.js', () => ({ currentBudget: vi.fn(() => ({ phase: 'ok' })) }))
 

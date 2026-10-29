@@ -19,12 +19,12 @@ describe('parsePrompt', () => {
   })
 
   it('defaults to a new task that can edit files', () => {
-    expect(parsePrompt({ projectId: 'p', text: ' fix it ' })).toEqual({ projectId: 'p', text: 'fix it', mode: 'new', permissionMode: 'acceptEdits' })
+    expect(parsePrompt({ projectId: 'p', text: ' fix it ' })).toEqual({ projectId: 'p', text: 'fix it', mode: 'new', permissionMode: 'auto' })
   })
 
   it('never allows skipping permissions', () => {
     const r = parsePrompt({ projectId: 'p', text: 'x', permissionMode: 'bypassPermissions' })
-    expect(r).toMatchObject({ permissionMode: 'acceptEdits' })
+    expect(r).toMatchObject({ permissionMode: 'auto' })
   })
 
   it('keeps plan mode and continue when asked', () => {
@@ -32,14 +32,14 @@ describe('parsePrompt', () => {
   })
 
   it('carries on the session you picked, with or without a project', () => {
-    expect(parsePrompt({ sessionId: 's', text: 'x', mode: 'new' })).toEqual({ projectId: '', sessionId: 's', text: 'x', mode: 'continue', permissionMode: 'acceptEdits' })
+    expect(parsePrompt({ sessionId: 's', text: 'x', mode: 'new' })).toEqual({ projectId: '', sessionId: 's', text: 'x', mode: 'continue', permissionMode: 'auto' })
     expect(parsePrompt({ projectId: 'p', sessionId: 's', text: 'x' })).toMatchObject({ projectId: 'p', sessionId: 's', mode: 'continue' })
     expect(parsePrompt({ projectId: 'p', text: 'x' })).not.toHaveProperty('sessionId')
   })
 
   it('starts a chat about no project, which asks before doing anything', () => {
-    expect(parsePrompt({ chat: true, text: 'hi' })).toEqual({ projectId: '', chat: true, text: 'hi', mode: 'new', permissionMode: 'default' })
-    expect(parsePrompt({ chat: true, projectId: 'p', text: 'x', permissionMode: 'acceptEdits', mode: 'continue' })).toMatchObject({ projectId: '', mode: 'continue', permissionMode: 'default' })
+    expect(parsePrompt({ chat: true, text: 'hi' })).toEqual({ projectId: '', chat: true, text: 'hi', mode: 'new', permissionMode: 'auto' })
+    expect(parsePrompt({ chat: true, projectId: 'p', text: 'x', permissionMode: 'plan', mode: 'continue' })).toMatchObject({ projectId: '', mode: 'continue', permissionMode: 'auto' })
     expect(parsePrompt({ chat: 'yes', text: 'x' })).toEqual({ error: 'Pick a project first.' })
     expect(parsePrompt({ projectId: 'p', text: 'x' })).not.toHaveProperty('chat')
   })

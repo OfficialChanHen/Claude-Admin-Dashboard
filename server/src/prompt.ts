@@ -11,7 +11,9 @@ import { promptToolArgs } from './mcp.js'
 // It runs on your Pro plan like any other Claude Code session, and its
 // session log shows up in the office the same way.
 
-export const PERMISSION_MODES = ['acceptEdits', 'default', 'plan'] as const
+// Auto lets Claude Code's safety check run routine steps without asking; risky
+// ones are blocked or asked in HQ. acceptEdits stays valid for older queued tasks.
+export const PERMISSION_MODES = ['auto', 'acceptEdits', 'default', 'plan'] as const
 export type PermissionMode = (typeof PERMISSION_MODES)[number]
 export type PromptMode = 'new' | 'continue'
 // The CLI's short names, so a prompt keeps working as new versions come out.
@@ -38,8 +40,8 @@ export function parsePrompt(body: PromptBody): PromptRequest | { error: string }
   if (!text) return { error: 'Write a prompt first.' }
   if (text.length > MAX_PROMPT) return { error: 'That prompt is too long.' }
   const mode: PromptMode = sessionId || body.mode === 'continue' ? 'continue' : 'new'
-  // A chat has no files of its own to edit, so anything beyond reading asks you first.
-  const permissionMode = chat ? 'default' : PERMISSION_MODES.includes(body.permissionMode as PermissionMode) ? (body.permissionMode as PermissionMode) : 'acceptEdits'
+  // A chat has no plan to make, so it always runs in auto mode.
+  const permissionMode = chat ? 'auto' : PERMISSION_MODES.includes(body.permissionMode as PermissionMode) ? (body.permissionMode as PermissionMode) : 'auto'
   const model = MODELS.includes(body.model as Model) ? (body.model as Model) : undefined
   return { projectId, ...(sessionId ? { sessionId } : {}), ...(chat ? { chat: true as const } : {}), text, mode, permissionMode, ...(model ? { model } : {}) }
 }

@@ -407,7 +407,7 @@ function callTool(me: RoleRow, name: string, args: Record<string, unknown>, now 
     if ('error' in target) return target.error
     const from = me.role === 'manager' ? 'your project manager' : 'the boss'
     try {
-      startPrompt({ projectId: target.projectId, text: `[A message from ${from} in Claude HQ]\n\n${text}`, mode: 'continue', permissionMode: 'acceptEdits' }, target.cwd, sid)
+      startPrompt({ projectId: target.projectId, text: `[A message from ${from} in Claude HQ]\n\n${text}`, mode: 'continue', permissionMode: 'auto' }, target.cwd, sid)
     } catch {
       return 'Claude Code could not be started.'
     }

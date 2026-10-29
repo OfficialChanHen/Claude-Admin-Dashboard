@@ -153,7 +153,7 @@ export function spendSpare(now = Date.now()) {
     const project = row.project_id ? projects.get(row.project_id) : undefined
     if (!project || !fs.existsSync(project.path)) continue
     governor.pilot.add(row.session_id)
-    startPrompt({ projectId: project.id, text: RESUME_TEXT, mode: 'continue', permissionMode: 'acceptEdits' }, project.path, row.session_id)
+    startPrompt({ projectId: project.id, text: RESUME_TEXT, mode: 'continue', permissionMode: 'auto' }, project.path, row.session_id)
     bus.publish({ kind: 'budget' })
     return { resumed: row.session_id }
   }
@@ -176,7 +176,7 @@ function startQueued(q: Queued, projects: Map<string, { id: string; path: string
   bus.publish({ kind: 'budget' })
   const project = projects.get(q.project_id)
   if (!project || !fs.existsSync(project.path)) return null
-  const permissionMode = PERMISSION_MODES.includes(q.permission_mode as PermissionMode) ? (q.permission_mode as PermissionMode) : 'acceptEdits'
+  const permissionMode = PERMISSION_MODES.includes(q.permission_mode as PermissionMode) ? (q.permission_mode as PermissionMode) : 'auto'
   const model = MODELS.includes(q.model as Model) ? { model: q.model as Model } : {}
   return startPrompt({ projectId: project.id, text: q.text, mode: 'new', permissionMode, ...model }, project.path).sessionId
 }

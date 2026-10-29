@@ -91,7 +91,7 @@ export function recoverTasks(bootAt: number, now = Date.now()) {
     }
     run('UPDATE tasks SET ended_at = ? WHERE id = ?', now, t.id)
     if (decision === 'resume' && fs.existsSync(t.cwd)) {
-      const permissionMode = PERMISSION_MODES.includes(t.permission_mode as PermissionMode) ? (t.permission_mode as PermissionMode) : 'acceptEdits'
+      const permissionMode = PERMISSION_MODES.includes(t.permission_mode as PermissionMode) ? (t.permission_mode as PermissionMode) : 'auto'
       const model = MODELS.includes(t.model as Model) ? { model: t.model as Model } : {}
       startPrompt({ projectId: t.project_id ?? '', text: RECOVER_TEXT, mode: 'continue', permissionMode, ...model }, t.cwd, t.session_id, { recovered: true })
       out.resumed++
