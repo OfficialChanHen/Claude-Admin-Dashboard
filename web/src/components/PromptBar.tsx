@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Project } from '../lib/api'
+import { rememberModel, startingModel } from '../lib/promptModel'
 import { PixelIcon } from './PixelIcon'
 import { zoneColor } from './ProjectsPanel'
 
@@ -51,7 +52,8 @@ export function PromptBar({
   const [text, setText] = useState('')
   const [mode, setMode] = useState<SendOptions['mode']>(() => stored('hq.prompt.mode', ['new', 'continue'] as const, 'new'))
   const [perm, setPerm] = useState<SendOptions['permissionMode']>(() => stored('hq.prompt.perm', ['acceptEdits', 'plan'] as const, 'acceptEdits'))
-  const [model, setModel] = useState<(typeof MODELS)[number][0]>(() => stored('hq.prompt.model', MODELS.map(([k]) => k), 'default'))
+  const remembered = () => stored('hq.prompt.model', MODELS.map(([k]) => k), 'default')
+  const [model, setModel] = useState<(typeof MODELS)[number][0]>(() => startingModel(!!target, remembered()))
   // Spare usage waits for the last half hour before a reset, as a new task.
   const [when, setWhen] = useState<SendOptions['when']>('now')
   const [busy, setBusy] = useState(false)
@@ -61,6 +63,11 @@ export function PromptBar({
   useEffect(() => {
     if ((project || target || chat) && focusKey) ref.current?.focus()
   }, [project, target?.sessionId, chat, focusKey])
+
+  // Switching between a person and a project picks the starting model again.
+  useEffect(() => {
+    setModel(startingModel(!!target, remembered()))
+  }, [target?.sessionId])
 
   useEffect(() => {
     if (!note || note.bad) return
@@ -84,6 +91,7 @@ export function PromptBar({
     try {
       await onSend(t, { mode: target ? 'continue' : sendWhen === 'spare' ? 'new' : mode, permissionMode: perm, when: sendWhen, ...(model === 'default' ? {} : { model }) })
       setText('')
+      if (target) setModel('default')
       setNote({
         text: target
           ? `Sent to ${name}. They will get back to their desk shortly.`
@@ -166,7 +174,7 @@ export function PromptBar({
               aria-pressed={model === k}
               onClick={() => {
                 setModel(k)
-                store('hq.prompt.model', k)
+                if (rememberModel(!!target)) store('hq.prompt.model', k)
               }}
             >
               {l}
