@@ -6,7 +6,7 @@ import {
   CAP, FACADE, FRONT, ROOM_FACE, ROOM_WALL, TILE, WALL, outerRect, roomShell, rooms,
   type Area, type Facing, type FacilityKey, type FloorKind, type Office, type Pod, type Rect, type Sheet,
 } from './office'
-import { BRIEF_MS, REPORT_MS, type Emote, type Sprite, type Use, type WorldModel } from './model'
+import { BRIEF_MS, REPORT_MS, clip, type Emote, type Sprite, type Use, type WorldModel } from './model'
 import { TASKS, taskLabel, taskOf, type TaskKind, type Thing } from './tasks'
 import { iconCells, type IconName } from '../lib/pixelIcons'
 import { isDark } from '../lib/theme'
@@ -673,6 +673,14 @@ function drawSurround(ctx: CanvasRenderingContext2D, cam: Camera, pal: Palette, 
       ctx.fillRect(c.x - r, c.y - r, r * 2, r * 2)
     }
   }
+}
+
+/** One line of text, cut short with an ellipsis if it is wider than `maxW`. */
+export function fitLine(ctx: Pick<CanvasRenderingContext2D, 'measureText'>, text: string, maxW: number) {
+  if (ctx.measureText(text).width <= maxW) return text
+  let t = text
+  while (t && ctx.measureText(`${t.trimEnd()}…`).width > maxW) t = t.slice(0, -1)
+  return `${t.trimEnd()}…`
 }
 
 export function wrap(ctx: Pick<CanvasRenderingContext2D, 'measureText'>, text: string, maxW: number, maxLines: number) {
@@ -1427,10 +1435,18 @@ function drawThought(ctx: CanvasRenderingContext2D, cx: number, top: number, q: 
 export type RoleTone = 'boss' | 'manager' | 'agent' | 'helper'
 
 /** What the tag under someone's feet says. */
-export function roleTag(s: Pick<Sprite, 'rank' | 'role'>): { text: string; tone: RoleTone } {
+const TAG_MAX = 24
+/** Names a person has before they have a task name of their own. */
+const PLACEHOLDER_NAMES = new Set(['Helper', 'Session', 'Untitled session'])
+
+/** The tag under someone's feet: the boss and managers by role, agents and helpers by their task when they have one. */
+export function roleTag(s: Pick<Sprite, 'rank' | 'role'> & { label?: string }): { text: string; tone: RoleTone } {
   if (s.role === 'boss') return { text: 'Boss', tone: 'boss' }
   if (s.role === 'manager') return { text: 'Manager', tone: 'manager' }
-  return s.rank === 'junior' ? { text: 'Helper', tone: 'helper' } : { text: 'Agent', tone: 'agent' }
+  const name = s.label?.trim()
+  const tone: RoleTone = s.rank === 'junior' ? 'helper' : 'agent'
+  if (!name || PLACEHOLDER_NAMES.has(name)) return { text: tone === 'helper' ? 'Helper' : 'Agent', tone }
+  return { text: clip(name, TAG_MAX), tone }
 }
 
 const TAG_TONE: Record<RoleTone, { bg: keyof Palette; line: keyof Palette; text: keyof Palette }> = {
@@ -1470,20 +1486,24 @@ function drawOverlay(
     ctx.textBaseline = 'top'
     return h
   }
-  // Their role, under their feet: the boss, a manager, an agent (a session) or a helper (a subagent).
+  // A tag under their feet: the boss or a manager by role, an agent (a session) or a helper (a subagent) by
+  // its task, so you can tell who is doing what without clicking. The person you clicked gets the whole name.
   let underFeet = feet + px(3)
   if (cam.P >= 2 * dpr) {
     const tag = roleTag(s)
     const tone = TAG_TONE[tag.tone]
     ctx.font = font(9, 700)
-    const tw = Math.ceil(ctx.measureText(tag.text).width)
+    // No wider than the gap to the next desk, so neighbours' tags don't run into each other.
+    const room = (s.rank === 'junior' ? 2 : 3) * TILE * cam.P - px(12)
+    const text = selected ? tag.text : fitLine(ctx, tag.text, Math.max(px(40), room))
+    const tw = Math.ceil(ctx.measureText(text).width)
     const w = tw + px(8)
     const h = px(13)
     const x = Math.round(cx - w / 2)
     box(ctx, x, underFeet, w, h, pal[tone.bg], pal[tone.line], Math.max(1, px(1)), px(2))
     ctx.fillStyle = pal[tone.text]
     ctx.textBaseline = 'middle'
-    ctx.fillText(tag.text, x + px(4), underFeet + h / 2)
+    ctx.fillText(text, x + px(4), underFeet + h / 2)
     ctx.textBaseline = 'top'
     underFeet += h + px(2)
   }

@@ -159,8 +159,11 @@ export function KeyPanel() {
           <span className="key-chip role-helper">Helper</span>
         </div>
         <p className="note">
-          The tag under each person's feet is their role. The boss watches all the managers. A manager watches one project's agents.
-          An agent is one of your sessions, and a helper is a subagent an agent sent for.
+          The tag under each person's feet says who they are. The boss and managers go by their role. An agent's tag shows its
+          session's task, and a helper's tag shows the job it was sent for, in the colours above. A tag says Agent or
+          Helper until there is a task name. Long names are cut short; click the person to see the whole name. The boss watches
+          all the managers. A manager watches one project's agents. An agent is one of your sessions, and a helper is a subagent an
+          agent sent for.
         </p>
         <Row mark={<PixelIcon name="door" />}>
           Drag one of your sessions to a door to send them home. That ends the session once you confirm. Drop them anywhere else and they walk back to their desk.

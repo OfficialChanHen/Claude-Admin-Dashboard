@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Camera } from './camera'
 import { buildOffice, TILE } from './office'
 import { WorldModel, type Sprite } from './model'
-import { ART, doorAt, hitFloor, hitRect, hitTest, isGreyHair, lampFor, lookOf, roleTag, swapColors, BOSS, MANAGER, SENIORS, JUNIORS, YOU, podCenter, podStatus, sameHit, skyAt, darkness, LAMPS_ON, statusText, wrap, type Frame } from './render'
+import { ART, doorAt, hitFloor, hitRect, hitTest, isGreyHair, lampFor, lookOf, roleTag, swapColors, BOSS, MANAGER, SENIORS, JUNIORS, YOU, podCenter, podStatus, sameHit, skyAt, darkness, LAMPS_ON, statusText, wrap, fitLine, type Frame } from './render'
 
 const office = buildOffice([
   { id: 'a', name: 'Alpha' },
@@ -172,6 +172,24 @@ describe('isGreyHair', () => {
   })
 })
 
+describe('fitLine', () => {
+  const ctx = { measureText: (t: string) => ({ width: t.length }) as TextMetrics }
+
+  it('leaves text that fits alone', () => {
+    expect(fitLine(ctx, 'Find auth', 10)).toBe('Find auth')
+  })
+
+  it('cuts text that does not fit and marks it', () => {
+    expect(fitLine(ctx, 'Find auth callers', 10)).toBe('Find auth…')
+    expect(fitLine(ctx, 'Supercalifragilistic', 6)).toBe('Super…')
+  })
+
+  it('drops a trailing space before the mark', () => {
+    expect(fitLine(ctx, 'Find a thing', 8)).toBe('Find a…')
+    expect(fitLine(ctx, 'Find  auth', 6)).toBe('Find…')
+  })
+})
+
 describe('wrap', () => {
   // Every character is 1 unit wide, so widths are easy to reason about.
   const ctx = { measureText: (t: string) => ({ width: t.length }) as TextMetrics }
@@ -248,6 +266,26 @@ describe('roleTag', () => {
     expect(roleTag({ rank: 'senior', role: 'manager' })).toEqual({ text: 'Manager', tone: 'manager' })
     expect(roleTag({ rank: 'senior', role: null })).toEqual({ text: 'Agent', tone: 'agent' })
     expect(roleTag({ rank: 'junior' })).toEqual({ text: 'Helper', tone: 'helper' })
+  })
+
+  it('names agents and helpers by their task', () => {
+    expect(roleTag({ rank: 'senior', role: null, label: 'Fix the login redirect' })).toEqual({ text: 'Fix the login redirect', tone: 'agent' })
+    expect(roleTag({ rank: 'junior', label: 'Find auth callers' })).toEqual({ text: 'Find auth callers', tone: 'helper' })
+    expect(roleTag({ rank: 'senior', role: 'boss', label: 'Weekly plan' }).text).toBe('Boss')
+    expect(roleTag({ rank: 'senior', role: 'manager', label: 'Morning report' }).text).toBe('Manager')
+  })
+
+  it('keeps the plain role when there is no task name yet', () => {
+    expect(roleTag({ rank: 'senior', role: null, label: 'Untitled session' }).text).toBe('Agent')
+    expect(roleTag({ rank: 'senior', role: null, label: 'Session' }).text).toBe('Agent')
+    expect(roleTag({ rank: 'junior', label: 'Helper' }).text).toBe('Helper')
+    expect(roleTag({ rank: 'junior', label: '  ' }).text).toBe('Helper')
+  })
+
+  it('shortens long task names', () => {
+    const t = roleTag({ rank: 'junior', label: 'Review the whole payments module for race conditions' }).text
+    expect(t.length).toBeLessThanOrEqual(24)
+    expect(t.endsWith('…')).toBe(true)
   })
 })
 
