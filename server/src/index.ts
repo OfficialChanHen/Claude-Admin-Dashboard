@@ -14,6 +14,7 @@ import { handleHook } from './hooks.js'
 import { activeSessions, dbStats, listSessions, sessionDetail, usageSummary } from './usage.js'
 import { headlessSession, joinTask, parsePrompt, resumableChat, runningPrompts, sessionTarget, startPrompt } from './prompt.js'
 import { SESSION_ID, stopSession } from './stop.js'
+import { askBtw, parseBtw } from './btw.js'
 import { sessionChat } from './chat.js'
 import { hierarchyState, startHierarchy, toolsFor } from './hierarchy.js'
 import { adviseHook, budgetState, dropPaused, queuePrompt, runQueued, startBudget, unqueue } from './budget.js'
@@ -114,6 +115,21 @@ app.post<{ Params: { id: string } }>('/api/sessions/:id/stop', async (req, reply
   if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) return reply.code(415).send({ error: 'Send JSON.' })
   const r = stopSession(req.params.id)
   return 'error' in r ? reply.code(409).send(r) : r
+})
+// A side question (/btw): answered from a copy of their conversation, even mid-task,
+// and never added to it. JSON only, as it spends usage.
+app.post<{ Params: { id: string } }>('/api/sessions/:id/btw', async (req, reply) => {
+  if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) return reply.code(415).send({ error: 'Send JSON.' })
+  if (!SESSION_ID.test(req.params.id)) return reply.code(404).send({ error: 'That session is not in HQ.' })
+  const parsed = parseBtw((req.body ?? {}) as { text?: unknown })
+  if ('error' in parsed) return reply.code(400).send(parsed)
+  const row = get<{ project_id: string | null; cwd: string | null }>('SELECT project_id, cwd FROM sessions WHERE id = ?', req.params.id)
+  if (!row) return reply.code(404).send({ error: 'That session is not in HQ.' })
+  // The session log is kept per folder, so the copy has to run where they did.
+  const cwd = row.cwd ?? listProjects().find((p) => p.id === row.project_id)?.path
+  if (!cwd || !fs.existsSync(cwd)) return reply.code(400).send({ error: 'That session’s folder is gone.' })
+  const r = await askBtw(req.params.id, cwd, parsed.text)
+  return 'error' in r ? reply.code(502).send(r) : r
 })
 app.get('/api/limits', async () => getLimits())
 // Each project's git state and dev server, for the whiteboards and TVs in its room.

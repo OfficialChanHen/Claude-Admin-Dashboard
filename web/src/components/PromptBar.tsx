@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Project } from '../lib/api'
+import { api, type Project } from '../lib/api'
+import { btwQuestion } from '../lib/btw'
 import { rememberModel, startingModel } from '../lib/promptModel'
+import { Markdown } from './Markdown'
 import { PixelIcon } from './PixelIcon'
 import { zoneColor } from './ProjectsPanel'
 
@@ -58,6 +60,8 @@ export function PromptBar({
   const [when, setWhen] = useState<SendOptions['when']>('now')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ text: string; bad: boolean } | null>(null)
+  // The last side question and its answer. It is shown here only, never in their conversation.
+  const [aside, setAside] = useState<{ q: string; answer: string | null } | null>(null)
   const ref = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -67,6 +71,7 @@ export function PromptBar({
   // Switching between a person and a project picks the starting model again.
   useEffect(() => {
     setModel(startingModel(!!target, remembered()))
+    setAside(null)
   }, [target?.sessionId])
 
   useEffect(() => {
@@ -83,9 +88,30 @@ export function PromptBar({
   // A prompt to one person goes now, into their own conversation. So does a chat.
   const sendWhen = target || chat ? 'now' : when
 
+  // /btw asks a side question of the person you are talking to.
+  const ask = async (q: string) => {
+    if (!target) return setNote({ text: 'Click someone in the office to ask them a side question.', bad: true })
+    if (!q) return setNote({ text: 'Write your question after /btw.', bad: true })
+    setBusy(true)
+    setNote(null)
+    setAside({ q, answer: null })
+    try {
+      const { answer } = await api.btw(target.sessionId, q)
+      setAside({ q, answer })
+      setText('')
+    } catch (e) {
+      setAside(null)
+      setNote({ text: (e as Error).message, bad: true })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const send = async () => {
     const t = text.trim()
     if (!t || busy) return
+    const q = btwQuestion(t)
+    if (q !== null) return ask(q)
     setBusy(true)
     setNote(null)
     try {
@@ -112,7 +138,8 @@ export function PromptBar({
   }
 
   const ctxLabel = target ? `Stop talking to ${name}` : chat ? 'Stop chatting' : 'Stop prompting this project'
-  const sendLabel = busy ? 'Sending' : sendWhen === 'spare' ? 'Queue' : 'Send'
+  const asking = btwQuestion(text) !== null
+  const sendLabel = busy ? 'Sending' : asking ? 'Ask on the side' : sendWhen === 'spare' ? 'Queue' : 'Send'
 
   // Laid out like the Claude Code extension's input: the text on top, and a footer
   // inside the same box with the options on the left and who it goes to beside Send.
@@ -124,15 +151,28 @@ export function PromptBar({
         send()
       }}
     >
+      {aside && (
+        <div className="btw-card" role="status">
+          <div className="btw-head">
+            <span>Side question, not added to their conversation</span>
+            {aside.answer !== null && (
+              <button type="button" className="prompt-ctx-x" aria-label="Dismiss the side answer" title="Dismiss (Esc)" onClick={() => setAside(null)}><PixelIcon name="close" size={8} /></button>
+            )}
+          </div>
+          <div className="btw-q">{aside.q}</div>
+          {aside.answer === null ? <div className="btw-wait">Thinking...</div> : <div className="chat-text md"><Markdown text={aside.answer} /></div>}
+        </div>
+      )}
       <textarea
         ref={ref}
         className="prompt-input"
         rows={1}
         value={text}
-        placeholder={target?.busy ? `${name} is working. Add something and they will read it after the step they are on.` : target ? `What should ${name} do next?` : chat ? 'Ask anything. It is not about any project.' : `What should ${name} do?`}
+        placeholder={target?.busy ? `${name} is working. Add something and they will read it after the step they are on, or /btw to ask on the side.` : target ? `What should ${name} do next? /btw asks on the side.` : chat ? 'Ask anything. It is not about any project.' : `What should ${name} do?`}
         aria-label={`Prompt for ${name}`}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
+          if (e.key === 'Escape' && aside?.answer != null) return setAside(null)
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()
             send()

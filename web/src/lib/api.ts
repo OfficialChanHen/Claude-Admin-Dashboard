@@ -156,6 +156,8 @@ export const api = {
     req<{ ok: true }>(`/api/approvals/${id}`, { method: 'POST', body: JSON.stringify({ decision }) }),
   status: () => req<{ ready: boolean; progress: { done: number; total: number } }>('/api/status'),
   chat: (id: string) => req<ChatLine[]>(`/api/sessions/${encodeURIComponent(id)}/chat`),
+  // A side question: answered from a copy of their conversation, never added to it.
+  btw: (id: string, text: string) => req<{ answer: string }>(`/api/sessions/${encodeURIComponent(id)}/btw`, { method: 'POST', body: JSON.stringify({ text }) }),
   stopSession: (id: string) => req<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}/stop`, { method: 'POST', body: '{}' }),
 }
 
