@@ -130,11 +130,12 @@ set `HQ_GUARD=on` to bring them back.
 - A prompt you type past the limit still runs, and that session is left alone
   until the reset.
 - In the last 30 minutes before a reset, if nothing is working or waiting,
-  HQ uses what is left: it resumes paused sessions to finish their task, then
-  starts the prompts you queued with "Spare usage" in a project's prompt box,
-  one at a time. That work may go up to 95% and 99%.
+  HQ uses what is left to resume paused sessions and finish their task, one
+  at a time. That work may go up to 95% and 99%.
+- "Save for later" in a project's prompt box keeps a prompt without running
+  it. It starts only when you press Run on it in the plan meter.
 
-The plan meter lists what is paused and queued. Set `HQ_WRAP_AT`, `HQ_STOP_AT`
+The plan meter lists what is paused and saved. Set `HQ_WRAP_AT`, `HQ_STOP_AT`
 and `HQ_SPARE_MIN` to change the numbers, or `HQ_BUDGET=off` to turn it off.
 Run `npm run hooks:install` again after updating, since the prompt and tool
 hooks now read HQ's reply.

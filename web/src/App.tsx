@@ -147,7 +147,7 @@ export function App() {
     world.current!.sync(active)
   }, [active])
 
-  // How much work waits for spare usage, for the plate in the corner.
+  // Saved prompts and paused sessions, for the plate in the corner.
   const [waiting, setWaiting] = useState({ queued: 0, paused: 0 })
   useEffect(() => {
     api.budget().then((b) => setWaiting({ queued: b.queue.length, paused: b.paused.length })).catch(() => {})
@@ -483,7 +483,7 @@ export function App() {
   const services: { label: string; open: () => void }[] = [
     { label: 'Reception: projects', open: () => setWin({ kind: 'projects' }) },
     { label: 'Accounts: usage', open: () => setWin({ kind: 'usage', projectId: null }) },
-    { label: 'Plan meter: limits and the spare usage queue', open: () => setWin({ kind: 'limits' }) },
+    { label: 'Plan meter: limits and prompts saved for later', open: () => setWin({ kind: 'limits' }) },
     { label: 'Archive: action log', open: () => setWin({ kind: 'log' }) },
     { label: 'Notice board: key and lighting', open: () => setWin({ kind: 'key' }) },
     { label: 'Reports from the boss and managers', open: () => setWin({ kind: 'reports' }) },
@@ -550,7 +550,7 @@ export function App() {
         {(waiting.queued > 0 || waiting.paused > 0) && (
           <button className="queue-plate hud-plate" onClick={() => setWin({ kind: 'limits' })}>
             <PixelIcon name="queue" size={12} />
-            {[waiting.queued && `${waiting.queued} queued`, waiting.paused && `${waiting.paused} paused`].filter(Boolean).join(', ')}
+            {[waiting.queued && `${waiting.queued} saved`, waiting.paused && `${waiting.paused} paused`].filter(Boolean).join(', ')}
           </button>
         )}
         <button

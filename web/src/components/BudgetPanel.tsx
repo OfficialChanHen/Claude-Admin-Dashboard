@@ -9,7 +9,7 @@ const PHASE: Record<Budget['phase'], string> = {
   stop: 'New steps are on hold until the reset.',
 }
 
-/** The 5 hour budget under the plan meter: the rules, paused sessions and the spare usage queue. */
+/** The 5 hour budget under the plan meter: the rules, paused sessions and the prompts saved for later. */
 export function BudgetPanel({ projects, refreshKey }: { projects: Map<string, Project>; refreshKey: number }) {
   const now = useNow(30_000)
   const [budget, setBudget] = useState<Budget | null>(null)
@@ -34,12 +34,12 @@ export function BudgetPanel({ projects, refreshKey }: { projects: Map<string, Pr
         {budget.guard
           ? `At ${budget.wrapAt}% of the 5 hour limit, sessions finish the step they are on and stop. At ${budget.stopAt}% new steps are held. `
           : 'Sessions are not stopped near the 5 hour limit for now (HQ_GUARD=on brings it back). '}
-        In the last {budget.spareMin} minutes before a reset, if nothing else is running, HQ finishes paused work and then starts queued tasks.
+        In the last {budget.spareMin} minutes before a reset, if nothing else is running, HQ finishes paused work. Saved prompts start only when you run them.
         A prompt you type past the limit still runs.
       </p>
       {(PHASE[budget.phase] || budget.spare) && (
         <p className={`chip ${budget.phase === 'ok' ? '' : 'warn'}`} role="status">
-          {budget.spare && budget.phase === 'ok' ? 'Spare usage: queued work can run now.' : PHASE[budget.phase]}
+          {budget.spare && budget.phase === 'ok' ? 'Spare usage: paused work can finish now.' : PHASE[budget.phase]}
         </p>
       )}
       {error && <p className="chip err" role="alert">{error}</p>}
@@ -62,8 +62,8 @@ export function BudgetPanel({ projects, refreshKey }: { projects: Map<string, Pr
       )}
 
       <div className="budget-head-row">
-        <h3 className="budget-head">Queued for spare usage</h3>
-        {budget.queue.length > 1 && <button className="btn small" onClick={() => remove(api.runQueued())}>Run all now</button>}
+        <h3 className="budget-head">Saved for later</h3>
+        {budget.queue.length > 1 && <button className="btn small" onClick={() => remove(api.runQueued())}>Run all</button>}
       </div>
       {budget.queue.length ? (
         <ul className="budget-list">
@@ -73,13 +73,13 @@ export function BudgetPanel({ projects, refreshKey }: { projects: Map<string, Pr
                 <b>{name(q.projectId)}</b> {q.text.length > 120 ? `${q.text.slice(0, 120)}...` : q.text}
                 <span className="note"> {q.permissionMode === 'plan' ? 'plan first, ' : ''}added {ago(q.addedAt, now)}</span>
               </span>
-              <button className="btn small" onClick={() => remove(api.runQueued(q.id))}>Run now</button>
+              <button className="btn small" onClick={() => remove(api.runQueued(q.id))}>Run</button>
               <button className="btn small" onClick={() => remove(api.unqueue(q.id))}>Remove</button>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="note">Nothing queued. Pick Spare usage in a project's prompt box to add a task.</p>
+        <p className="note">Nothing saved. Pick Save for later in a project's prompt box to keep a prompt here.</p>
       )}
     </div>
   )

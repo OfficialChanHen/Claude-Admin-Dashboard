@@ -155,3 +155,23 @@ describe('runQueued', async () => {
     expect(hq.runQueued('x', NOW)).toEqual({ found: 0, started: [], missing: [] })
   })
 })
+
+describe('spendSpare', async () => {
+  const db = await import('./db.js')
+  const { getLimits } = await import('./limits.js')
+  const { listProjects } = await import('./projects.js')
+  const { startPrompt } = await import('./prompt.js')
+  const hq = await import('./budget.js')
+
+  it('never starts saved prompts on its own; they wait for you to run them', () => {
+    vi.mocked(startPrompt).mockClear()
+    vi.mocked(getLimits).mockReturnValue({ fiveHour: at(60, 20), fetchedAt: NOW - 60_000 } as never)
+    vi.mocked(listProjects).mockReturnValue([{ id: 'p', path: process.cwd() }] as never)
+    vi.mocked(db.all).mockImplementation(((sql: string) =>
+      sql.includes('FROM queue') ? [{ id: 'a', project_id: 'p', text: 'do a', permission_mode: 'auto', model: null }] : []) as never)
+    expect(hq.spendSpare(NOW)).toBeNull()
+    expect(startPrompt).not.toHaveBeenCalled()
+    vi.mocked(db.all).mockReset().mockReturnValue([])
+    vi.mocked(getLimits).mockReturnValue(null)
+  })
+})

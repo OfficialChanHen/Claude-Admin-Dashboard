@@ -177,8 +177,8 @@ app.post('/api/prompt', async (req, reply) => {
   const project = listProjects().find((p) => p.id === parsed.projectId)
   if (!project) return reply.code(400).send({ error: 'That project is not in HQ.' })
   if (!fs.existsSync(project.path)) return reply.code(400).send({ error: 'That project folder is gone.' })
-  // "When usage is spare": waits for the last half hour before a reset.
-  if ((req.body as { when?: unknown })?.when === 'spare') {
+  // "Save for later": kept until you run it from the plan meter.
+  if ((req.body as { when?: unknown })?.when === 'later') {
     return { ok: true, queued: queuePrompt(parsed.projectId, parsed.text, parsed.permissionMode, parsed.model) }
   }
   try {
@@ -190,18 +190,18 @@ app.post('/api/prompt', async (req, reply) => {
 })
 app.get('/api/prompt', async () => runningPrompts())
 
-// The 5 hour budget: what is paused, what is queued for spare usage.
+// The 5 hour budget: what is paused, and the prompts you saved for later.
 app.get('/api/budget', async () => budgetState())
 app.get('/api/hierarchy', async () => hierarchyState())
 app.delete<{ Params: { id: string } }>('/api/budget/queue/:id', async (req, reply) =>
-  unqueue(req.params.id) ? { ok: true } : reply.code(404).send({ error: 'That task already started or was removed.' }),
+  unqueue(req.params.id) ? { ok: true } : reply.code(404).send({ error: 'That prompt already ran or was removed.' }),
 )
-// Runs queued work now: one task, or the whole queue.
+// Runs saved prompts: one, or all of them.
 app.post<{ Params: { id: string } }>('/api/budget/queue/:id/run', async (req, reply) => {
   try {
     const r = runQueued(req.params.id)
-    if (!r.found) return reply.code(404).send({ error: 'That task already started or was removed.' })
-    if (r.missing.length) return reply.code(400).send({ error: 'That project folder is gone, so the task was dropped.' })
+    if (!r.found) return reply.code(404).send({ error: 'That prompt already ran or was removed.' })
+    if (r.missing.length) return reply.code(400).send({ error: 'That project folder is gone, so the prompt was dropped.' })
     return { ok: true, started: r.started }
   } catch {
     return reply.code(500).send({ error: 'Claude Code could not be started.' })
