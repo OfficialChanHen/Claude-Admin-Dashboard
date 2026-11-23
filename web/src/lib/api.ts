@@ -65,7 +65,7 @@ export type Approval = {
   headless?: boolean
 }
 
-/** The 5 hour budget: when sessions wrap up and stop, and what waits for spare usage. */
+/** The 5 hour budget: when sessions wrap up and stop, what is paused, and the prompts saved for later. */
 export type Budget = {
   on: boolean
   guard: boolean
@@ -144,7 +144,7 @@ export const api = {
   limits: () => req<Limits | null>('/api/limits'),
   git: () => req<GitInfo[]>('/api/git'),
   previews: () => req<Preview[]>('/api/previews'),
-  prompt: (body: { projectId: string; sessionId?: string; chat?: boolean; text: string; mode: 'new' | 'continue'; permissionMode: 'auto' | 'plan'; when?: 'now' | 'spare'; model?: 'fable' | 'opus' | 'sonnet' | 'haiku' }) =>
+  prompt: (body: { projectId: string; sessionId?: string; chat?: boolean; text: string; mode: 'new' | 'continue'; permissionMode: 'auto' | 'plan'; when?: 'now' | 'later'; model?: 'fable' | 'opus' | 'sonnet' | 'haiku' }) =>
     req<{ ok: true; resumed?: string | null; queued?: string; joined?: true }>('/api/prompt', { method: 'POST', body: JSON.stringify(body) }),
   budget: () => req<Budget>('/api/budget'),
   hierarchy: () => req<Hierarchy>('/api/hierarchy'),

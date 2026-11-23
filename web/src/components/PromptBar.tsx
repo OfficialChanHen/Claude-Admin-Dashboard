@@ -6,7 +6,7 @@ import { Markdown } from './Markdown'
 import { PixelIcon } from './PixelIcon'
 import { zoneColor } from './ProjectsPanel'
 
-export type SendOptions = { mode: 'new' | 'continue'; permissionMode: 'auto' | 'plan'; when: 'now' | 'spare'; model?: Model }
+export type SendOptions = { mode: 'new' | 'continue'; permissionMode: 'auto' | 'plan'; when: 'now' | 'later'; model?: Model }
 
 // Default leaves the model to your usual Claude Code setting.
 const MODELS = [['default', 'Default'], ['fable', 'Fable'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']] as const
@@ -56,7 +56,7 @@ export function PromptBar({
   const [perm, setPerm] = useState<SendOptions['permissionMode']>(() => stored('hq.prompt.perm', ['auto', 'plan'] as const, 'auto'))
   const remembered = () => stored('hq.prompt.model', MODELS.map(([k]) => k), 'default')
   const [model, setModel] = useState<(typeof MODELS)[number][0]>(() => startingModel(!!target, remembered()))
-  // Spare usage waits for the last half hour before a reset, as a new task.
+  // Save for later keeps it as a new task until you run it from the plan meter.
   const [when, setWhen] = useState<SendOptions['when']>('now')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ text: string; bad: boolean } | null>(null)
@@ -115,7 +115,7 @@ export function PromptBar({
     setBusy(true)
     setNote(null)
     try {
-      const sent = await onSend(t, { mode: target ? 'continue' : sendWhen === 'spare' ? 'new' : mode, permissionMode: perm, when: sendWhen, ...(model === 'default' ? {} : { model }) })
+      const sent = await onSend(t, { mode: target ? 'continue' : sendWhen === 'later' ? 'new' : mode, permissionMode: perm, when: sendWhen, ...(model === 'default' ? {} : { model }) })
       setText('')
       if (target) setModel('default')
       setNote({
@@ -125,8 +125,8 @@ export function PromptBar({
           ? `Sent to ${name}. They will get back to their desk shortly.`
           : chat
             ? 'Sent. Someone will sit down in Other folders shortly; click them to read the reply.'
-          : sendWhen === 'spare'
-            ? `Queued for ${name}. It starts near the next reset if usage is left and nothing else is running.`
+          : sendWhen === 'later'
+            ? `Saved for ${name}. Run it from the plan meter when you are ready.`
             : `Sent to ${name}. Someone will sit down at a desk there shortly.`,
         bad: false,
       })
@@ -139,7 +139,7 @@ export function PromptBar({
 
   const ctxLabel = target ? `Stop talking to ${name}` : chat ? 'Stop chatting' : 'Stop prompting this project'
   const asking = btwQuestion(text) !== null
-  const sendLabel = busy ? 'Sending' : asking ? 'Ask on the side' : sendWhen === 'spare' ? 'Queue' : 'Send'
+  const sendLabel = busy ? 'Sending' : asking ? 'Ask on the side' : sendWhen === 'later' ? 'Save' : 'Send'
 
   // Laid out like the Claude Code extension's input: the text on top, and a footer
   // inside the same box with the options on the left and who it goes to beside Send.
@@ -183,7 +183,7 @@ export function PromptBar({
         {!target && !chat && (
           <Picker label="When" value={when} onPick={setWhen} options={[
             ['now', 'Now', 'Starts straight away'],
-            ['spare', 'Spare usage', 'Waits for the last half hour before a reset, if usage is left'],
+            ['later', 'Save for later', 'Keeps it until you run it from the plan meter'],
           ]} />
         )}
         {!target && when === 'now' && (

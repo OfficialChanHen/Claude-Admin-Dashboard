@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS paused (
   resumed_at  INTEGER
 );
 
--- Prompts waiting for spare usage before a reset.
+-- Prompts you saved for later. They start only when you run them.
 CREATE TABLE IF NOT EXISTS queue (
   id              TEXT PRIMARY KEY,
   project_id      TEXT NOT NULL,

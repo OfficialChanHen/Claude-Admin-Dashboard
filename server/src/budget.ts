@@ -10,9 +10,9 @@ import { MODELS, PERMISSION_MODES, runningPrompts, startPrompt, type Model, type
 // Keeps the 5 hour plan limit for you. Past the wrap-up mark, sessions are
 // told (through the hooks) to finish the step they are on and stop; a little
 // past that, new steps are refused. In the last half hour before the window
-// resets, whatever is left would go to waste, so HQ uses it: it finishes the
-// work it paused, then starts the prompts you queued for spare usage, one at a
-// time and only while nothing else is running.
+// resets, whatever is left would go to waste, so HQ uses it to finish the work
+// it paused, one session at a time and only while nothing else is running.
+// Prompts you save for later are never started here; they wait for you to run them.
 
 export type Phase = 'ok' | 'wrap' | 'stop'
 export type Reading = { phase: Phase; spare: boolean; pct: number | null; resetsAt: number | null; window: string | null }
@@ -139,7 +139,7 @@ function busy(now: number) {
   return !!get(`SELECT 1 FROM sessions WHERE state IN ('working', 'waiting') AND last_at >= ? LIMIT 1`, now - ACTIVE_WINDOW_MS)
 }
 
-/** Starts the next piece of spare-usage work, if this is the time for it. */
+/** Resumes the next paused session on spare usage, if this is the time for it. */
 export function spendSpare(now = Date.now()) {
   if (!canSpend(currentBudget(now), getLimits(), busy(now), now)) return null
   const projects = new Map(listProjects().map((p) => [p.id, p]))
@@ -157,20 +157,12 @@ export function spendSpare(now = Date.now()) {
     bus.publish({ kind: 'budget' })
     return { resumed: row.session_id }
   }
-
-  const queued = all<Queued>('SELECT id, project_id, text, permission_mode, model FROM queue WHERE started_at IS NULL ORDER BY added_at')
-  for (const q of queued) {
-    const sessionId = startQueued(q, projects, now)
-    if (!sessionId) continue
-    governor.pilot.add(sessionId)
-    return { started: q.id }
-  }
   return null
 }
 
 type Queued = { id: string; project_id: string; text: string; permission_mode: string; model: string | null }
 
-/** Takes a task off the queue and starts it. A task whose project is gone is dropped. */
+/** Takes a saved prompt off the list and starts it. One whose project is gone is dropped. */
 function startQueued(q: Queued, projects: Map<string, { id: string; path: string }>, now: number) {
   run('UPDATE queue SET started_at = ? WHERE id = ?', now, q.id)
   bus.publish({ kind: 'budget' })
@@ -182,9 +174,9 @@ function startQueued(q: Queued, projects: Map<string, { id: string; path: string
 }
 
 /**
- * Starts queued tasks now instead of waiting for spare usage: one, or all of
- * them when no id is given. You asked for it, so they are not HQ's pilots and
- * a prompt you type to them past the limit still runs.
+ * Starts saved prompts when you run them: one, or all of them when no id is
+ * given. You asked for it, so they are not HQ's pilots and a prompt you type to
+ * them past the limit still runs.
  */
 export function runQueued(id?: string, now = Date.now()) {
   const projects = new Map(listProjects().map((p) => [p.id, p]))
