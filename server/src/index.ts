@@ -17,7 +17,7 @@ import { SESSION_ID, stopSession } from './stop.js'
 import { askBtw, parseBtw } from './btw.js'
 import { sessionChat } from './chat.js'
 import { hierarchyState, startHierarchy, toolsFor } from './hierarchy.js'
-import { adviseHook, budgetState, dropPaused, queuePrompt, runQueued, startBudget, unqueue } from './budget.js'
+import { adviseHook, budgetState, dropPaused, editQueued, queuePrompt, runQueued, startBudget, unqueue } from './budget.js'
 import { gitState, startGit } from './git.js'
 import { previewFile, previewState, startPreviews } from './previews.js'
 import { recoverTasks } from './recover.js'
@@ -196,6 +196,13 @@ app.get('/api/hierarchy', async () => hierarchyState())
 app.delete<{ Params: { id: string } }>('/api/budget/queue/:id', async (req, reply) =>
   unqueue(req.params.id) ? { ok: true } : reply.code(404).send({ error: 'That prompt already ran or was removed.' }),
 )
+// Rewrites a saved prompt before it runs.
+app.patch<{ Params: { id: string }; Body: { text?: unknown } }>('/api/budget/queue/:id', async (req, reply) => {
+  const r = editQueued(req.params.id, typeof req.body?.text === 'string' ? req.body.text : '')
+  if ('gone' in r) return reply.code(404).send({ error: 'That prompt already ran or was removed.' })
+  if ('error' in r) return reply.code(400).send({ error: r.error })
+  return r
+})
 // Runs saved prompts: one, or all of them.
 app.post<{ Params: { id: string } }>('/api/budget/queue/:id/run', async (req, reply) => {
   try {

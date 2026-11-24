@@ -5,7 +5,7 @@ vi.mock('./db.js', () => ({ all: vi.fn(() => []), get: vi.fn(), run: vi.fn(() =>
 vi.mock('./bus.js', () => ({ bus: { publish: vi.fn(), on: vi.fn() } }))
 vi.mock('./limits.js', () => ({ getLimits: vi.fn(() => null) }))
 vi.mock('./projects.js', () => ({ listProjects: vi.fn(() => []) }))
-vi.mock('./prompt.js', () => ({ PERMISSION_MODES: ['auto', 'acceptEdits', 'default', 'plan'], MODELS: ['fable', 'opus', 'sonnet', 'haiku'], runningPrompts: vi.fn(() => []), startPrompt: vi.fn() }))
+vi.mock('./prompt.js', () => ({ MAX_PROMPT: 20_000, PERMISSION_MODES: ['auto', 'acceptEdits', 'default', 'plan'], MODELS: ['fable', 'opus', 'sonnet', 'haiku'], runningPrompts: vi.fn(() => []), startPrompt: vi.fn() }))
 vi.mock('./config.js', () => ({
   ACTIVE_WINDOW_MS: 600_000,
   BUDGET: { on: true, guard: true, wrapAt: 80, stopAt: 85, spareMs: 30 * 60_000, spareWrapAt: 95, spareStopAt: 99 },
@@ -153,6 +153,29 @@ describe('runQueued', async () => {
   it('finds nothing when the task already started', () => {
     vi.mocked(db.all).mockReturnValueOnce([])
     expect(hq.runQueued('x', NOW)).toEqual({ found: 0, started: [], missing: [] })
+  })
+})
+
+describe('editQueued', async () => {
+  const db = await import('./db.js')
+  const hq = await import('./budget.js')
+
+  it('saves the new text, trimmed, while the prompt has not started', () => {
+    vi.mocked(db.run).mockReturnValueOnce({ changes: 1 } as never)
+    expect(hq.editQueued('a', '  do it better  ')).toEqual({ ok: true })
+    expect(db.run).toHaveBeenLastCalledWith(expect.stringContaining('started_at IS NULL'), 'do it better', 'a')
+  })
+
+  it('refuses empty or too-long text without touching the queue', () => {
+    vi.mocked(db.run).mockClear()
+    expect(hq.editQueued('a', '   ')).toEqual({ error: 'Write a prompt first.' })
+    expect(hq.editQueued('a', 'x'.repeat(20_001))).toEqual({ error: 'That prompt is too long.' })
+    expect(db.run).not.toHaveBeenCalled()
+  })
+
+  it('says so when the prompt already ran or was removed', () => {
+    vi.mocked(db.run).mockReturnValueOnce({ changes: 0 } as never)
+    expect(hq.editQueued('gone', 'new text')).toEqual({ gone: true })
   })
 })
 

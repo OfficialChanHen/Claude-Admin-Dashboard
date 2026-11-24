@@ -5,7 +5,7 @@ import { all, get, run } from './db.js'
 import { bus } from './bus.js'
 import { getLimits, type Limits } from './limits.js'
 import { listProjects } from './projects.js'
-import { MODELS, PERMISSION_MODES, runningPrompts, startPrompt, type Model, type PermissionMode } from './prompt.js'
+import { MAX_PROMPT, MODELS, PERMISSION_MODES, runningPrompts, startPrompt, type Model, type PermissionMode } from './prompt.js'
 
 // Keeps the 5 hour plan limit for you. Past the wrap-up mark, sessions are
 // told (through the hooks) to finish the step they are on and stop; a little
@@ -194,6 +194,17 @@ export function queuePrompt(projectId: string, text: string, permissionMode: Per
   run('INSERT INTO queue (id, project_id, text, permission_mode, model, added_at) VALUES (?, ?, ?, ?, ?, ?)', id, projectId, text, permissionMode, model ?? null, Date.now())
   bus.publish({ kind: 'budget' })
   return id
+}
+
+/** Changes the text of a saved prompt that has not started yet. */
+export function editQueued(id: string, text: string): { ok: true } | { gone: true } | { error: string } {
+  const t = text.trim()
+  if (!t) return { error: 'Write a prompt first.' }
+  if (t.length > MAX_PROMPT) return { error: 'That prompt is too long.' }
+  const res = run('UPDATE queue SET text = ? WHERE id = ? AND started_at IS NULL', t, id)
+  if (!res.changes) return { gone: true }
+  bus.publish({ kind: 'budget' })
+  return { ok: true }
 }
 
 export function unqueue(id: string) {

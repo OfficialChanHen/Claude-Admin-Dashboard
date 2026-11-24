@@ -148,6 +148,8 @@ export const api = {
     req<{ ok: true; resumed?: string | null; queued?: string; joined?: true }>('/api/prompt', { method: 'POST', body: JSON.stringify(body) }),
   budget: () => req<Budget>('/api/budget'),
   hierarchy: () => req<Hierarchy>('/api/hierarchy'),
+  editQueued: (id: string, text: string) =>
+    req<{ ok: true }>(`/api/budget/queue/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ text }) }),
   unqueue: (id: string) => req<{ ok: true }>(`/api/budget/queue/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   runQueued: (id?: string) =>
     req<{ ok: true; started: string[]; dropped?: number }>(id ? `/api/budget/queue/${encodeURIComponent(id)}/run` : '/api/budget/queue/run', { method: 'POST' }),

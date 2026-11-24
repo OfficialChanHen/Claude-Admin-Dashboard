@@ -29,7 +29,7 @@ export type PromptBody = { projectId?: unknown; sessionId?: unknown; chat?: unkn
  */
 export type PromptRequest = { projectId: string; sessionId?: string; chat?: true; text: string; mode: PromptMode; permissionMode: PermissionMode; model?: Model }
 
-const MAX_PROMPT = 20_000
+export const MAX_PROMPT = 20_000
 
 export function parsePrompt(body: PromptBody): PromptRequest | { error: string } {
   const text = typeof body.text === 'string' ? body.text.trim() : ''

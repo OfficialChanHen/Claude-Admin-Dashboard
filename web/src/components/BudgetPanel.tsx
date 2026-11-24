@@ -14,6 +14,8 @@ export function BudgetPanel({ projects, refreshKey }: { projects: Map<string, Pr
   const now = useNow(30_000)
   const [budget, setBudget] = useState<Budget | null>(null)
   const [error, setError] = useState('')
+  // The saved prompt being rewritten, and its draft text.
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null)
 
   useEffect(() => {
     api.budget().then(setBudget).catch(() => {})
@@ -26,6 +28,16 @@ export function BudgetPanel({ projects, refreshKey }: { projects: Map<string, Pr
   const remove = (p: Promise<unknown>) => {
     setError('')
     p.then(() => api.budget().then(setBudget)).catch((e) => setError((e as Error).message))
+  }
+  const save = () => {
+    if (!editing) return
+    setError('')
+    api.editQueued(editing.id, editing.text)
+      .then(() => {
+        setEditing(null)
+        return api.budget().then(setBudget)
+      })
+      .catch((e) => setError((e as Error).message))
   }
 
   return (
@@ -67,16 +79,39 @@ export function BudgetPanel({ projects, refreshKey }: { projects: Map<string, Pr
       </div>
       {budget.queue.length ? (
         <ul className="budget-list">
-          {budget.queue.map((q) => (
-            <li key={q.id}>
-              <span className="budget-text">
-                <b>{name(q.projectId)}</b> {q.text.length > 120 ? `${q.text.slice(0, 120)}...` : q.text}
-                <span className="note"> {q.permissionMode === 'plan' ? 'plan first, ' : ''}added {ago(q.addedAt, now)}</span>
-              </span>
-              <button className="btn small" onClick={() => remove(api.runQueued(q.id))}>Run</button>
-              <button className="btn small" onClick={() => remove(api.unqueue(q.id))}>Remove</button>
-            </li>
-          ))}
+          {budget.queue.map((q) =>
+            editing?.id === q.id ? (
+              <li key={q.id} className="budget-edit">
+                <b>{name(q.projectId)}</b>
+                <textarea
+                  className="input"
+                  aria-label="Saved prompt"
+                  rows={4}
+                  autoFocus
+                  value={editing.text}
+                  onChange={(e) => setEditing({ id: q.id, text: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save()
+                    if (e.key === 'Escape') setEditing(null)
+                  }}
+                />
+                <span className="budget-edit-actions">
+                  <button className="btn small" onClick={save} disabled={!editing.text.trim()}>Save</button>
+                  <button className="btn small" onClick={() => setEditing(null)}>Cancel</button>
+                </span>
+              </li>
+            ) : (
+              <li key={q.id}>
+                <span className="budget-text">
+                  <b>{name(q.projectId)}</b> {q.text.length > 120 ? `${q.text.slice(0, 120)}...` : q.text}
+                  <span className="note"> {q.permissionMode === 'plan' ? 'plan first, ' : ''}added {ago(q.addedAt, now)}</span>
+                </span>
+                <button className="btn small" onClick={() => remove(api.runQueued(q.id))}>Run</button>
+                <button className="btn small" onClick={() => setEditing({ id: q.id, text: q.text })}>Edit</button>
+                <button className="btn small" onClick={() => remove(api.unqueue(q.id))}>Remove</button>
+              </li>
+            ),
+          )}
         </ul>
       ) : (
         <p className="note">Nothing saved. Pick Save for later in a project's prompt box to keep a prompt here.</p>
